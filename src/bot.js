@@ -39,14 +39,12 @@ const helpText = `📖 *How to use the Master Bot:*\n\n` +
 
 const startKeyboard = new InlineKeyboard()
   .text('📋 Manage Bots', 'menu:manage')
-  .text('➕ Add Bot', 'menu:addbot')
   .row()
   .text('📊 System Status', 'menu:status')
   .text('ℹ️ Help', 'menu:help');
 
 const helpKeyboard = new InlineKeyboard()
   .text('📋 Manage Bots', 'menu:manage')
-  .text('➕ Add Bot', 'menu:addbot')
   .row()
   .text('⬅️ Back to Home', 'menu:back_start');
 
@@ -510,7 +508,44 @@ const botControlMenu = new Menu('bot-control')
       ctx.menu.nav('bot-control');
     }
   })
-  .text('📥 Update Code', async (ctx) => {
+  .row()
+  .text('⚙️ Env Variables', async (ctx) => {
+    userStates.delete(ctx.from.id);
+    const botId = ctx.session?.currentBotId;
+    if (!botId) return ctx.reply('No bot selected.');
+    const botData = await db.getBot(botId);
+    if (!botData) return;
+
+    const envText = getEnvMenuText(botData);
+    await ctx.editMessageText(envText, { 
+      parse_mode: 'Markdown', 
+      link_preview_options: { is_disabled: true } 
+    });
+    ctx.menu.nav('env-menu');
+  })
+  .text('📋 View Logs', async (ctx) => {
+    userStates.delete(ctx.from.id);
+    const botId = ctx.session?.currentBotId;
+    if (!botId) return ctx.reply('No bot selected.');
+    const botData = await db.getBot(botId);
+    if (!botData) return;
+
+    try { await ctx.answerCallbackQuery('Loading logs...'); } catch (e) {}
+    const logs = manager.getBotLogs(botId);
+    const displayLogs = logs.length > 3000 ? '...\n' + logs.substring(logs.length - 3000) : logs;
+    
+    const text = `📋 *Logs for ${botData.name}*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `\`\`\`\n${displayLogs}\n\`\`\``;
+
+    await ctx.editMessageText(text, { 
+      parse_mode: 'Markdown', 
+      link_preview_options: { is_disabled: true } 
+    });
+    ctx.menu.nav('logs-menu');
+  })
+  .row()
+  .text('📥 Update Git Repo', async (ctx) => {
     userStates.delete(ctx.from.id);
     const botId = ctx.session?.currentBotId;
     if (!botId) return ctx.reply('No bot selected.');
@@ -518,7 +553,7 @@ const botControlMenu = new Menu('bot-control')
     if (!botData) return ctx.reply('Bot not found.');
 
     try {
-      await ctx.answerCallbackQuery('Updating code...');
+      await ctx.answerCallbackQuery('Updating Git repo...');
     } catch (e) {}
     
     // Close menu immediately to remove buttons and prevent re-render
@@ -526,7 +561,7 @@ const botControlMenu = new Menu('bot-control')
 
     const logsKeyboard = new InlineKeyboard().text('🔙 Stop & Back to Dashboard', `stop_logs_${botId}`);
 
-    await ctx.editMessageText(`⏳ Updating code for: ${botData.name} (Re-cloning & deploying latest changes)...`, {
+    await ctx.editMessageText(`⏳ Updating Git repository for: ${botData.name} (Re-cloning & deploying latest changes)...`, {
       parse_mode: 'Markdown',
       reply_markup: logsKeyboard,
       link_preview_options: { is_disabled: true }
@@ -544,7 +579,7 @@ const botControlMenu = new Menu('bot-control')
           const logs = manager.getBotLogs(botId);
           const displayLogs = logs.length > 3000 ? '...\n' + logs.substring(logs.length - 3000) : logs;
           
-          const liveText = `⏳ *Updating Code:* \`${botData.name}\`\n` +
+          const liveText = `⏳ *Updating Git Repo:* \`${botData.name}\`\n` +
             `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
             `*Real-time Logs:*\n` +
             `\`\`\`\n${displayLogs}\n\`\`\``;
@@ -618,7 +653,7 @@ const botControlMenu = new Menu('bot-control')
       activeLogIntervals.delete(userId);
       ctx.session.botStatus = 'error';
 
-      const errorMsg = `❌ *Code Update Failed for ${botData.name}!*\n` +
+      const errorMsg = `❌ *Git Update Failed for ${botData.name}!*\n` +
         `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
         `The process crashed immediately on boot.\n\n` +
         `*Error Traceback:*\n` +
@@ -631,43 +666,6 @@ const botControlMenu = new Menu('bot-control')
       ctx.menu.nav('bot-control');
     }
   })
-  .row()
-  .text('⚙️ Env Variables', async (ctx) => {
-    userStates.delete(ctx.from.id);
-    const botId = ctx.session?.currentBotId;
-    if (!botId) return ctx.reply('No bot selected.');
-    const botData = await db.getBot(botId);
-    if (!botData) return;
-
-    const envText = getEnvMenuText(botData);
-    await ctx.editMessageText(envText, { 
-      parse_mode: 'Markdown', 
-      link_preview_options: { is_disabled: true } 
-    });
-    ctx.menu.nav('env-menu');
-  })
-  .text('📋 View Logs', async (ctx) => {
-    userStates.delete(ctx.from.id);
-    const botId = ctx.session?.currentBotId;
-    if (!botId) return ctx.reply('No bot selected.');
-    const botData = await db.getBot(botId);
-    if (!botData) return;
-
-    try { await ctx.answerCallbackQuery('Loading logs...'); } catch (e) {}
-    const logs = manager.getBotLogs(botId);
-    const displayLogs = logs.length > 3000 ? '...\n' + logs.substring(logs.length - 3000) : logs;
-    
-    const text = `📋 *Logs for ${botData.name}*\n` +
-      `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `\`\`\`\n${displayLogs}\n\`\`\``;
-
-    await ctx.editMessageText(text, { 
-      parse_mode: 'Markdown', 
-      link_preview_options: { is_disabled: true } 
-    });
-    ctx.menu.nav('logs-menu');
-  })
-  .row()
   .text('🔄 Refresh Status', async (ctx) => {
     userStates.delete(ctx.from.id);
     const botId = ctx.session?.currentBotId;
