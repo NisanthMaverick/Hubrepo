@@ -510,6 +510,127 @@ const botControlMenu = new Menu('bot-control')
       ctx.menu.nav('bot-control');
     }
   })
+  .text('📥 Update Code', async (ctx) => {
+    userStates.delete(ctx.from.id);
+    const botId = ctx.session?.currentBotId;
+    if (!botId) return ctx.reply('No bot selected.');
+    const botData = await db.getBot(botId);
+    if (!botData) return ctx.reply('Bot not found.');
+
+    try {
+      await ctx.answerCallbackQuery('Updating code...');
+    } catch (e) {}
+    
+    // Close menu immediately to remove buttons and prevent re-render
+    try { await ctx.menu.close(); } catch (e) {}
+
+    const logsKeyboard = new InlineKeyboard().text('🔙 Stop & Back to Dashboard', `stop_logs_${botId}`);
+
+    await ctx.editMessageText(`⏳ Updating code for: ${botData.name} (Re-cloning & deploying latest changes)...`, {
+      parse_mode: 'Markdown',
+      reply_markup: logsKeyboard,
+      link_preview_options: { is_disabled: true }
+    });
+    
+    let logInterval = null;
+    let isCleared = false;
+    const userId = ctx.from.id;
+    
+    try {
+      // Start log polling interval to show progress
+      logInterval = setInterval(async () => {
+        if (isCleared) return;
+        try {
+          const logs = manager.getBotLogs(botId);
+          const displayLogs = logs.length > 3000 ? '...\n' + logs.substring(logs.length - 3000) : logs;
+          
+          const liveText = `⏳ *Updating Code:* \`${botData.name}\`\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `*Real-time Logs:*\n` +
+            `\`\`\`\n${displayLogs}\n\`\`\``;
+            
+          await ctx.editMessageText(liveText, {
+            parse_mode: 'Markdown',
+            reply_markup: logsKeyboard,
+            link_preview_options: { is_disabled: true }
+          });
+        } catch (e) {}
+      }, 1500);
+
+      // Store this active log interval so it can be cleared if user clicks Back
+      const oldActiveLog = activeLogIntervals.get(userId);
+      if (oldActiveLog) {
+        clearInterval(oldActiveLog.intervalId);
+      }
+      activeLogIntervals.set(userId, {
+        intervalId: logInterval,
+        botId,
+        isCleared: false
+      });
+
+      await manager.updateBotCode(botData);
+      
+      // Check if cancelled in the meantime
+      const currentLog = activeLogIntervals.get(userId);
+      if (!currentLog || currentLog.isCleared) {
+        if (logInterval) clearInterval(logInterval);
+        return;
+      }
+
+      ctx.session.botStatus = 'running';
+      isCleared = true;
+      if (logInterval) clearInterval(logInterval);
+      activeLogIntervals.delete(userId);
+      
+      try {
+        const logs = manager.getBotLogs(botId);
+        const displayLogs = logs.length > 3000 ? '...\n' + logs.substring(logs.length - 3000) : logs;
+        const successText = `🟢 *Bot "${botData.name}" Updated & Started Successfully!*\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `*Final Boot Logs:*\n` +
+          `\`\`\`\n${displayLogs}\n\`\`\``;
+        await ctx.editMessageText(successText, {
+          parse_mode: 'Markdown',
+          reply_markup: logsKeyboard,
+          link_preview_options: { is_disabled: true }
+        });
+      } catch (e) {}
+
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Check if cancelled/navigated away in the meantime
+      if (ctx.session?.currentBotId === botId) {
+        const updatedBot = await db.getBot(botId);
+        const text = getBotDetailsText(updatedBot);
+        await editMenuText(ctx, text);
+        ctx.menu.nav('bot-control');
+      }
+    } catch (err) {
+      // Check if cancelled in the meantime
+      const currentLog = activeLogIntervals.get(userId);
+      if (!currentLog || currentLog.isCleared) {
+        if (logInterval) clearInterval(logInterval);
+        return;
+      }
+
+      isCleared = true;
+      if (logInterval) clearInterval(logInterval);
+      activeLogIntervals.delete(userId);
+      ctx.session.botStatus = 'error';
+
+      const errorMsg = `❌ *Code Update Failed for ${botData.name}!*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `The process crashed immediately on boot.\n\n` +
+        `*Error Traceback:*\n` +
+        `\`\`\`\n${err.message}\n\`\`\``;
+
+      await ctx.editMessageText(errorMsg, { 
+        parse_mode: 'Markdown',
+        link_preview_options: { is_disabled: true }
+      });
+      ctx.menu.nav('bot-control');
+    }
+  })
   .row()
   .text('⚙️ Env Variables', async (ctx) => {
     userStates.delete(ctx.from.id);
@@ -612,8 +733,13 @@ mainMenu.dynamic(async (ctx, range) => {
   }
 });
 
-// Back to Home button at the bottom of the bots list
-mainMenu.text('⬅️ Back to Home', async (ctx) => {
+// Add Bot button inside the main menu list
+mainMenu.text('➕ Add Bot', async (ctx) => {
+  userStates.delete(ctx.from.id);
+  try { await ctx.answerCallbackQuery(); } catch (e) {}
+  await promptAddBot(ctx);
+}).row()
+.text('⬅️ Back to Home', async (ctx) => {
   userStates.delete(ctx.from.id);
   await ctx.editMessageText(startText, { 
     parse_mode: 'Markdown', 

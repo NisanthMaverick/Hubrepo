@@ -513,3 +513,26 @@ export async function deleteBotFiles(botId) {
     fs.rmSync(dest, { recursive: true, force: true });
   }
 }
+
+/**
+ * Stops bot, deletes cloned directory, re-clones, reinstalls, and restarts
+ */
+export async function updateBotCode(bot) {
+  const botId = bot.id;
+  
+  if (activeBots.has(botId)) {
+    await stopBot(botId);
+  }
+
+  const dest = getBotPath(botId);
+  if (fs.existsSync(dest)) {
+    console.log(`Deleting old files for bot ${bot.name} before re-cloning...`);
+    fs.rmSync(dest, { recursive: true, force: true });
+  }
+
+  // Re-clone, reinstall, rewrite env, and start bot process
+  await cloneBot(bot);
+  await installDependencies(bot);
+  writeEnvFile(bot);
+  await startBot(bot);
+}
