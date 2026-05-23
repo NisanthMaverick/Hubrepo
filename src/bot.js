@@ -17,6 +17,7 @@ function isAdmin(ctx) {
 
 // In-memory wizard/input states
 const userStates = new Map();
+const activeLogIntervals = new Map();
 
 // Initialize the bot
 export const bot = new Bot(CONFIG.TELEGRAM_BOT_TOKEN);
@@ -277,14 +278,17 @@ const botControlMenu = new Menu('bot-control')
         // Close menu immediately to remove buttons and prevent re-render
         try { await ctx.menu.close(); } catch (e) {}
 
+        const logsKeyboard = new InlineKeyboard().text('🔙 Stop & Back to Dashboard', `stop_logs_${botId}`);
+
         await ctx.editMessageText(`⏳ Starting bot: ${botData.name} (Installing dependencies & deploying)...`, {
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [] },
+          reply_markup: logsKeyboard,
           link_preview_options: { is_disabled: true }
         });
         
         let logInterval = null;
         let isCleared = false;
+        const userId = ctx.from.id;
         
         // Start log polling interval to show progress
         logInterval = setInterval(async () => {
@@ -300,18 +304,37 @@ const botControlMenu = new Menu('bot-control')
               
             await ctx.editMessageText(liveText, {
               parse_mode: 'Markdown',
-              reply_markup: { inline_keyboard: [] },
+              reply_markup: logsKeyboard,
               link_preview_options: { is_disabled: true }
             });
           } catch (e) {}
         }, 1500);
 
+        // Store this active log interval so it can be cleared if user clicks Back
+        const oldActiveLog = activeLogIntervals.get(userId);
+        if (oldActiveLog) {
+          clearInterval(oldActiveLog.intervalId);
+        }
+        activeLogIntervals.set(userId, {
+          intervalId: logInterval,
+          botId,
+          isCleared: false
+        });
+
         try {
           await manager.startBot(botData);
-          ctx.session.botStatus = 'running';
           
+          // Check if cancelled in the meantime
+          const currentLog = activeLogIntervals.get(userId);
+          if (!currentLog || currentLog.isCleared) {
+            if (logInterval) clearInterval(logInterval);
+            return;
+          }
+
+          ctx.session.botStatus = 'running';
           isCleared = true;
           if (logInterval) clearInterval(logInterval);
+          activeLogIntervals.delete(userId);
           
           try {
             const logs = manager.getBotLogs(botId);
@@ -322,15 +345,31 @@ const botControlMenu = new Menu('bot-control')
               `\`\`\`\n${displayLogs}\n\`\`\``;
             await ctx.editMessageText(successText, {
               parse_mode: 'Markdown',
-              reply_markup: { inline_keyboard: [] },
+              reply_markup: logsKeyboard,
               link_preview_options: { is_disabled: true }
             });
           } catch (e) {}
 
           await new Promise(r => setTimeout(r, 2000));
+          
+          // Check if cancelled/navigated away in the meantime
+          if (ctx.session?.currentBotId === botId) {
+            const updatedBot = await db.getBot(botId);
+            const text = getBotDetailsText(updatedBot);
+            await editMenuText(ctx, text);
+            ctx.menu.nav('bot-control');
+          }
         } catch (err) {
+          // Check if cancelled in the meantime
+          const currentLog = activeLogIntervals.get(userId);
+          if (!currentLog || currentLog.isCleared) {
+            if (logInterval) clearInterval(logInterval);
+            return;
+          }
+
           isCleared = true;
           if (logInterval) clearInterval(logInterval);
+          activeLogIntervals.delete(userId);
           ctx.session.botStatus = 'error';
           
           const errorMsg = `❌ *Startup Failed for ${botData.name}!*\n` +
@@ -339,17 +378,12 @@ const botControlMenu = new Menu('bot-control')
             `*Error Traceback:*\n` +
             `\`\`\`\n${err.message}\n\`\`\``;
             
-          await ctx.reply(errorMsg, { 
+          await ctx.editMessageText(errorMsg, { 
             parse_mode: 'Markdown',
             link_preview_options: { is_disabled: true }
           });
+          ctx.menu.nav('bot-control');
         }
-
-        // Re-render dashboard and explicitly attach menu via navigation
-        const updatedBot = await db.getBot(botId);
-        const text = getBotDetailsText(updatedBot);
-        await editMenuText(ctx, text);
-        ctx.menu.nav('bot-control');
       }
     }
   )
@@ -367,14 +401,17 @@ const botControlMenu = new Menu('bot-control')
     // Close menu immediately to remove buttons and prevent re-render
     try { await ctx.menu.close(); } catch (e) {}
 
+    const logsKeyboard = new InlineKeyboard().text('🔙 Stop & Back to Dashboard', `stop_logs_${botId}`);
+
     await ctx.editMessageText(`⏳ Restarting bot: ${botData.name}...`, {
       parse_mode: 'Markdown',
-      reply_markup: { inline_keyboard: [] },
+      reply_markup: logsKeyboard,
       link_preview_options: { is_disabled: true }
     });
     
     let logInterval = null;
     let isCleared = false;
+    const userId = ctx.from.id;
     
     try {
       await manager.stopBot(botId);
@@ -393,17 +430,36 @@ const botControlMenu = new Menu('bot-control')
             
           await ctx.editMessageText(liveText, {
             parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: [] },
+            reply_markup: logsKeyboard,
             link_preview_options: { is_disabled: true }
           });
         } catch (e) {}
       }, 1500);
 
+      // Store this active log interval so it can be cleared if user clicks Back
+      const oldActiveLog = activeLogIntervals.get(userId);
+      if (oldActiveLog) {
+        clearInterval(oldActiveLog.intervalId);
+      }
+      activeLogIntervals.set(userId, {
+        intervalId: logInterval,
+        botId,
+        isCleared: false
+      });
+
       await manager.startBot(botData);
-      ctx.session.botStatus = 'running';
       
+      // Check if cancelled in the meantime
+      const currentLog = activeLogIntervals.get(userId);
+      if (!currentLog || currentLog.isCleared) {
+        if (logInterval) clearInterval(logInterval);
+        return;
+      }
+
+      ctx.session.botStatus = 'running';
       isCleared = true;
       if (logInterval) clearInterval(logInterval);
+      activeLogIntervals.delete(userId);
       
       try {
         const logs = manager.getBotLogs(botId);
@@ -414,23 +470,45 @@ const botControlMenu = new Menu('bot-control')
           `\`\`\`\n${displayLogs}\n\`\`\``;
         await ctx.editMessageText(successText, {
           parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [] },
+          reply_markup: logsKeyboard,
           link_preview_options: { is_disabled: true }
         });
       } catch (e) {}
 
       await new Promise(r => setTimeout(r, 2000));
+
+      // Check if cancelled/navigated away in the meantime
+      if (ctx.session?.currentBotId === botId) {
+        const updatedBot = await db.getBot(botId);
+        const text = getBotDetailsText(updatedBot);
+        await editMenuText(ctx, text);
+        ctx.menu.nav('bot-control');
+      }
     } catch (err) {
+      // Check if cancelled in the meantime
+      const currentLog = activeLogIntervals.get(userId);
+      if (!currentLog || currentLog.isCleared) {
+        if (logInterval) clearInterval(logInterval);
+        return;
+      }
+
       isCleared = true;
       if (logInterval) clearInterval(logInterval);
+      activeLogIntervals.delete(userId);
       ctx.session.botStatus = 'error';
-      await ctx.reply(`Failed to restart bot ${botData.name}: ${err.message}`);
-    }
 
-    const updatedBot = await db.getBot(botId);
-    const text = getBotDetailsText(updatedBot);
-    await editMenuText(ctx, text);
-    ctx.menu.nav('bot-control');
+      const errorMsg = `❌ *Restart Failed for ${botData.name}!*\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `The process crashed immediately on boot.\n\n` +
+        `*Error Traceback:*\n` +
+        `\`\`\`\n${err.message}\n\`\`\``;
+
+      await ctx.editMessageText(errorMsg, { 
+        parse_mode: 'Markdown',
+        link_preview_options: { is_disabled: true }
+      });
+      ctx.menu.nav('bot-control');
+    }
   })
   .row()
   .text('⚙️ Env Variables', async (ctx) => {
@@ -686,6 +764,30 @@ bot.callbackQuery('menu:back_start', async (ctx) => {
     reply_markup: startKeyboard,
     link_preview_options: { is_disabled: true } 
   });
+});
+
+bot.callbackQuery(/stop_logs_(\d+)/, async (ctx) => {
+  const botId = parseInt(ctx.match[1], 10);
+  const userId = ctx.from.id;
+  
+  const activeLog = activeLogIntervals.get(userId);
+  if (activeLog) {
+    clearInterval(activeLog.intervalId);
+    activeLog.isCleared = true;
+    activeLogIntervals.delete(userId);
+  }
+  
+  try { await ctx.answerCallbackQuery('Log stream stopped'); } catch (e) {}
+  
+  const botData = await db.getBot(botId);
+  if (botData) {
+    const text = getBotDetailsText(botData);
+    await ctx.editMessageText(text, {
+      parse_mode: 'Markdown',
+      link_preview_options: { is_disabled: true }
+    });
+    ctx.menu.nav('bot-control');
+  }
 });
 
 // Standard Command slash fallbacks (if typed)
