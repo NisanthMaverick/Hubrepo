@@ -1,0 +1,18 @@
+# Dependency directories
+node_modules/
+
+# Environment files
+.env
+.env.production
+.env.development
+.env.local
+
+# Cloned child bots
+bots/
+
+# Data and logs fallbacks
+data/
+
+# OS files
+.DS_Store
+Thumbs.db
