@@ -22,6 +22,27 @@ const activeLogIntervals = new Map();
 // Initialize the bot
 export const bot = new Bot(CONFIG.TELEGRAM_BOT_TOKEN);
 
+// Send startup notification to admin using the child bot's token
+async function sendChildBotNotification(botData, userId) {
+  try {
+    const envs = botData.envVars instanceof Map ? Object.fromEntries(botData.envVars) : botData.envVars || {};
+    const tokenKey = Object.keys(envs).find(k => k.toLowerCase() === 'bot_token' || k.toLowerCase() === 'telegram_bot_token');
+    if (!tokenKey) {
+      console.log(`No token found in env variables for bot ${botData.name}. Skipping notification.`);
+      return;
+    }
+    const token = envs[tokenKey];
+    if (!token) return;
+
+    const tempBot = new Bot(token);
+    const messageText = `🤖 *${botData.name}* is successfully restarted from Master Bot!`;
+    await tempBot.api.sendMessage(userId, messageText, { parse_mode: 'Markdown' });
+    console.log(`Sent startup notification from child bot ${botData.name} to user ${userId}`);
+  } catch (e) {
+    console.error(`Failed to send child bot startup notification:`, e.message);
+  }
+}
+
 // --- UI Text Content and Inline Keyboards ---
 
 const startText = `🤖 *Welcome to the Bot Master Control!*\n\n` +
@@ -334,6 +355,9 @@ const botControlMenu = new Menu('bot-control')
           if (logInterval) clearInterval(logInterval);
           activeLogIntervals.delete(userId);
           
+          // Send notification via child bot to admin
+          sendChildBotNotification(botData, userId).catch(err => console.error(err));
+          
           try {
             const logs = manager.getBotLogs(botId);
             const displayLogs = logs.length > 3000 ? '...\n' + logs.substring(logs.length - 3000) : logs;
@@ -458,6 +482,9 @@ const botControlMenu = new Menu('bot-control')
       isCleared = true;
       if (logInterval) clearInterval(logInterval);
       activeLogIntervals.delete(userId);
+
+      // Send notification via child bot to admin
+      sendChildBotNotification(botData, userId).catch(err => console.error(err));
       
       try {
         const logs = manager.getBotLogs(botId);
@@ -616,6 +643,9 @@ const botControlMenu = new Menu('bot-control')
       isCleared = true;
       if (logInterval) clearInterval(logInterval);
       activeLogIntervals.delete(userId);
+
+      // Send notification via child bot to admin
+      sendChildBotNotification(botData, userId).catch(err => console.error(err));
       
       try {
         const logs = manager.getBotLogs(botId);
