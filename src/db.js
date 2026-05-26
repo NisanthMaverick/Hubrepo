@@ -9,6 +9,7 @@ let pool = null;
 let isPostgres = false;
 const JSON_DB_DIR = './data';
 const JSON_DB_FILE = path.join(JSON_DB_DIR, 'bots.json');
+const JSON_SETTINGS_FILE = path.join(JSON_DB_DIR, 'settings.json');
 
 // Ensure JSON DB fallback directory exists
 if (!fs.existsSync(JSON_DB_DIR)) {
@@ -16,6 +17,9 @@ if (!fs.existsSync(JSON_DB_DIR)) {
 }
 if (!fs.existsSync(JSON_DB_FILE)) {
   fs.writeFileSync(JSON_DB_FILE, JSON.stringify([], null, 2));
+}
+if (!fs.existsSync(JSON_SETTINGS_FILE)) {
+  fs.writeFileSync(JSON_SETTINGS_FILE, JSON.stringify({}, null, 2));
 }
 
 export async function connectDB() {
@@ -48,6 +52,13 @@ export async function connectDB() {
           created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
       `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS settings (
+          key VARCHAR(255) PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
       console.log('PostgreSQL schema initialized/verified.');
     } catch (err) {
       console.error('Failed to connect to PostgreSQL. Falling back to local JSON database.', err);
@@ -75,6 +86,24 @@ function writeJsonDB(data) {
     fs.writeFileSync(JSON_DB_FILE, JSON.stringify(data, null, 2));
   } catch (err) {
     console.error('Error writing to JSON DB:', err);
+  }
+}
+
+function readJsonSettings() {
+  try {
+    const data = fs.readFileSync(JSON_SETTINGS_FILE, 'utf8');
+    return JSON.parse(data);
+  } catch (err) {
+    console.error('Error reading JSON Settings, returning empty object:', err);
+    return {};
+  }
+}
+
+function writeJsonSettings(data) {
+  try {
+    fs.writeFileSync(JSON_SETTINGS_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('Error writing to JSON Settings:', err);
   }
 }
 
@@ -196,5 +225,35 @@ export async function deleteBot(id) {
     const bots = readJsonDB();
     const filtered = bots.filter(b => b.id !== id);
     writeJsonDB(filtered);
+  }
+}
+
+// ---------------- Settings Interface ----------------
+
+export async function getSetting(key, defaultValue = null) {
+  if (isPostgres) {
+    const res = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
+    if (res.rows.length) {
+      try { return JSON.parse(res.rows[0].value); } catch(e) { return res.rows[0].value; }
+    }
+    return defaultValue;
+  } else {
+    const settings = readJsonSettings();
+    return settings[key] !== undefined ? settings[key] : defaultValue;
+  }
+}
+
+export async function setSetting(key, value) {
+  const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  if (isPostgres) {
+    await pool.query(
+      `INSERT INTO settings (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+      [key, valStr]
+    );
+  } else {
+    const settings = readJsonSettings();
+    settings[key] = value;
+    writeJsonSettings(settings);
   }
 }

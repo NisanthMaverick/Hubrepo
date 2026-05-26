@@ -9,7 +9,6 @@ export const CONFIG = {
   DATABASE_URL: process.env.DATABASE_URL,
   BOTS_DIR: process.env.BOTS_DIR || './bots',
   PORT: process.env.PORT || 10000,
-  MAX_CONCURRENT_BOTS: parseInt(process.env.MAX_CONCURRENT_BOTS, 10) || 2,
 };
 
 // Verify critical variables

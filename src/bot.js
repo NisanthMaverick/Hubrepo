@@ -84,9 +84,9 @@ function getDashboardText(bots) {
       const uptime = manager.getBotUptime(b.id) || '0s';
       uptimeStr = ` | ⏱️ \`${uptime}\``;
     }
-    text += `${statusEmoji} *${b.name}* - ${b.status.toUpperCase()}${uptimeStr}\n`;
+    text += `${statusEmoji} *${b.name}*\n└ Status: ${b.status.toUpperCase()}${uptimeStr}\n\n`;
   }
-  return text;
+  return text.trim();
 }
 
 function getBotDetailsText(botData) {
@@ -279,10 +279,11 @@ const botControlMenu = new Menu('bot-control')
       if (botData.status !== 'running') {
         const allBots = await db.getBots();
         const runningBotsCount = allBots.filter(b => b.status === 'running').length;
-        if (runningBotsCount >= CONFIG.MAX_CONCURRENT_BOTS) {
+        const currentLimit = await db.getSetting('MAX_CONCURRENT_BOTS', 2);
+        if (runningBotsCount >= currentLimit) {
           try {
             await ctx.answerCallbackQuery({
-              text: `❌ Server limit reached! You can only run ${CONFIG.MAX_CONCURRENT_BOTS} bots in parallel. Please stop a bot first.`,
+              text: `❌ Server limit reached! You can only run ${currentLimit} bots in parallel. Please stop a bot first.`,
               show_alert: true
             });
           } catch (e) {}
@@ -766,22 +767,73 @@ const botControlMenu = new Menu('bot-control')
 botControlMenu.register(envMenu);
 botControlMenu.register(logsMenu);
 
-// 3. Main Menu
+// 3. Settings Menu
+export const settingsMenu = new Menu('settings-menu');
+
+settingsMenu.dynamic(async (ctx, range) => {
+  const currentLimit = await db.getSetting('MAX_CONCURRENT_BOTS', 2);
+  range.text(`🤖 Concurrent Bots Limit: ${currentLimit} (Max 5)`, async (ctx) => {
+    userStates.delete(ctx.from.id);
+    const promptMsg = await ctx.reply(
+      `Please enter the new concurrent bots limit (1-5):`,
+      { link_preview_options: { is_disabled: true } }
+    );
+    userStates.set(ctx.from.id, { 
+      action: 'awaiting_concurrency_limit',
+      promptMsgId: promptMsg.message_id,
+      menuMsgId: ctx.msg?.message_id
+    });
+  }).row();
+});
+
+settingsMenu.text('🔄 Restart All Bots', async (ctx) => {
+  userStates.delete(ctx.from.id);
+  try { await ctx.answerCallbackQuery('Restarting all active bots...'); } catch (e) {}
+  
+  const allBots = await db.getBots();
+  const runningBots = allBots.filter(b => b.status === 'running');
+  
+  if (runningBots.length === 0) {
+    return ctx.reply('No bots are currently running.');
+  }
+
+  await ctx.editMessageText(`⏳ Restarting ${runningBots.length} active bots...\nThis may take a minute.`, {
+    parse_mode: 'Markdown',
+    link_preview_options: { is_disabled: true }
+  });
+
+  for (const b of runningBots) {
+    try {
+      await manager.stopBot(b.id);
+      await manager.startBot(b);
+    } catch(e) {
+      console.error(`Failed to restart bot ${b.name}:`, e);
+    }
+  }
+
+  await ctx.editMessageText(`✅ Successfully restarted ${runningBots.length} bots.\n\n⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.`, {
+    parse_mode: 'Markdown',
+    reply_markup: settingsMenu,
+    link_preview_options: { is_disabled: true }
+  });
+}).row();
+
+settingsMenu.text('⬅️ Back to Dashboard', async (ctx) => {
+  userStates.delete(ctx.from.id);
+  const text = getDashboardText(await db.getBots());
+  await ctx.editMessageText(text, { 
+    parse_mode: 'Markdown', 
+    reply_markup: mainMenu,
+    link_preview_options: { is_disabled: true } 
+  });
+  ctx.menu.nav('main-menu');
+});
+
+// 4. Main Menu
 export const mainMenu = new Menu('main-menu');
 
 mainMenu.dynamic(async (ctx, range) => {
   const bots = await db.getBots();
-  
-  range.text('🔄 Refresh Dashboard', async (ctx) => {
-    try { await ctx.answerCallbackQuery('Refreshed!'); } catch (e) {}
-    const freshBots = await db.getBots();
-    const text = getDashboardText(freshBots);
-    await ctx.editMessageText(text, { 
-      parse_mode: 'Markdown', 
-      reply_markup: mainMenu,
-      link_preview_options: { is_disabled: true } 
-    });
-  }).row();
 
   if (bots.length === 0) {
     range.text('No bots registered yet.', () => {}).row();
@@ -807,12 +859,30 @@ mainMenu.dynamic(async (ctx, range) => {
   }
 });
 
-// Add Bot button inside the main menu list
-mainMenu.text('➕ Add Bot', async (ctx) => {
+mainMenu.text('🔄 Refresh', async (ctx) => {
+  try { await ctx.answerCallbackQuery('Refreshed!'); } catch (e) {}
+  const freshBots = await db.getBots();
+  const text = getDashboardText(freshBots);
+  await ctx.editMessageText(text, { 
+    parse_mode: 'Markdown', 
+    reply_markup: mainMenu,
+    link_preview_options: { is_disabled: true } 
+  });
+})
+.text('➕ Add Bot', async (ctx) => {
   userStates.delete(ctx.from.id);
   try { await ctx.answerCallbackQuery(); } catch (e) {}
   await promptAddBot(ctx);
 }).row()
+.text('⚙️ Settings', async (ctx) => {
+  userStates.delete(ctx.from.id);
+  await ctx.editMessageText('⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.', { 
+    parse_mode: 'Markdown', 
+    reply_markup: settingsMenu,
+    link_preview_options: { is_disabled: true } 
+  });
+  ctx.menu.nav('settings-menu');
+})
 .text('⬅️ Back to Home', async (ctx) => {
   userStates.delete(ctx.from.id);
   await ctx.editMessageText(startText, { 
@@ -823,6 +893,7 @@ mainMenu.text('➕ Add Bot', async (ctx) => {
 });
 
 mainMenu.register(botControlMenu);
+mainMenu.register(settingsMenu);
 
 // Initialize Session
 bot.use(session({
@@ -1150,6 +1221,37 @@ bot.on('message:text', async (ctx) => {
       );
     } catch (e) {
       const msg = await ctx.reply(envText, { parse_mode: 'Markdown', reply_markup: envMenu, link_preview_options: { is_disabled: true } });
+      ctx.session.menuMsgId = msg.message_id;
+    }
+  }
+  
+  // 4. Handling Concurrency Limit setting
+  else if (state.action === 'awaiting_concurrency_limit') {
+    userStates.delete(userId);
+    let newLimit = parseInt(text, 10);
+    
+    // Clean up chat input messages
+    try { await ctx.deleteMessage(); } catch (e) {}
+    try { await ctx.api.deleteMessage(ctx.chat.id, state.promptMsgId); } catch (e) {}
+
+    if (isNaN(newLimit) || newLimit < 1) {
+      newLimit = 1;
+    } else if (newLimit > 5) {
+      newLimit = 5;
+    }
+    
+    await db.setSetting('MAX_CONCURRENT_BOTS', newLimit);
+    
+    const settingsText = '⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.';
+    try {
+      await ctx.api.editMessageText(
+        ctx.chat.id, 
+        state.menuMsgId, 
+        settingsText, 
+        { parse_mode: 'Markdown', reply_markup: settingsMenu, link_preview_options: { is_disabled: true } }
+      );
+    } catch (e) {
+      const msg = await ctx.reply(settingsText, { parse_mode: 'Markdown', reply_markup: settingsMenu, link_preview_options: { is_disabled: true } });
       ctx.session.menuMsgId = msg.message_id;
     }
   }
