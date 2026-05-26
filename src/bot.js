@@ -71,6 +71,24 @@ const helpKeyboard = new InlineKeyboard()
 
 // --- Helper Utilities for formatting and editing ---
 
+function getDashboardText(bots) {
+  if (bots.length === 0) return '📋 *Bot Management Dashboard*\n\nNo bots registered yet.';
+  
+  let text = `📋 *Bot Management Dashboard*\n━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+  text += `🤖 *Total Bots:* \`${bots.length}\`\n\n`;
+  
+  for (const b of bots) {
+    const statusEmoji = b.status === 'running' ? '🟢' : b.status === 'error' ? '🔴' : '⚪';
+    let uptimeStr = '';
+    if (b.status === 'running') {
+      const uptime = manager.getBotUptime(b.id) || '0s';
+      uptimeStr = ` | ⏱️ \`${uptime}\``;
+    }
+    text += `${statusEmoji} *${b.name}* - ${b.status.toUpperCase()}${uptimeStr}\n`;
+  }
+  return text;
+}
+
 function getBotDetailsText(botData) {
   const envCount = Object.keys(botData.envVars || {}).length;
   const statusEmoji = botData.status === 'running' ? '🟢' : botData.status === 'error' ? '🔴' : '⚪';
@@ -722,12 +740,14 @@ const botControlMenu = new Menu('bot-control')
     await db.deleteBot(botId);
     await ctx.reply(`Bot ${botData.name} has been deleted.`);
     
-    await ctx.editMessageText('📋 *Bot Management Dashboard*', { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } });
+    const text = getDashboardText(await db.getBots());
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } });
     ctx.menu.nav('main-menu');
   })
   .text('⬅️ Back to List', async (ctx) => {
     userStates.delete(ctx.from.id);
-    await ctx.editMessageText('📋 *Bot Management Dashboard*', { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } });
+    const text = getDashboardText(await db.getBots());
+    await ctx.editMessageText(text, { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } });
     ctx.menu.nav('main-menu');
   });
 
@@ -739,10 +759,22 @@ export const mainMenu = new Menu('main-menu');
 
 mainMenu.dynamic(async (ctx, range) => {
   const bots = await db.getBots();
+  
+  range.text('🔄 Refresh Dashboard', async (ctx) => {
+    try { await ctx.answerCallbackQuery('Refreshed!'); } catch (e) {}
+    const freshBots = await db.getBots();
+    const text = getDashboardText(freshBots);
+    await ctx.editMessageText(text, { 
+      parse_mode: 'Markdown', 
+      reply_markup: mainMenu,
+      link_preview_options: { is_disabled: true } 
+    });
+  }).row();
+
   if (bots.length === 0) {
     range.text('No bots registered yet.', () => {}).row();
   } else {
-    bots.forEach((b) => {
+    bots.forEach((b, i) => {
       const statusEmoji = b.status === 'running' ? '🟢' : b.status === 'error' ? '🔴' : '⚪';
       range.text(`${statusEmoji} ${b.name}`, async (ctx) => {
         userStates.delete(ctx.from.id);
@@ -756,8 +788,10 @@ mainMenu.dynamic(async (ctx, range) => {
           reply_markup: botControlMenu,
           link_preview_options: { is_disabled: true } 
         });
-      }).row();
+      });
+      if ((i + 1) % 2 === 0) range.row();
     });
+    if (bots.length % 2 !== 0) range.row();
   }
 });
 
@@ -814,7 +848,8 @@ bot.command('start', async (ctx) => {
 bot.callbackQuery('menu:manage', async (ctx) => {
   userStates.delete(ctx.from.id);
   try { await ctx.answerCallbackQuery(); } catch (e) {}
-  await ctx.editMessageText('📋 *Bot Management Dashboard*', { 
+  const text = getDashboardText(await db.getBots());
+  await ctx.editMessageText(text, { 
     parse_mode: 'Markdown', 
     reply_markup: mainMenu,
     link_preview_options: { is_disabled: true } 
@@ -956,7 +991,8 @@ bot.command('help', async (ctx) => {
 
 bot.command('manage', async (ctx) => {
   userStates.delete(ctx.from.id);
-  const msg = await ctx.reply('📋 *Bot Management Dashboard*', {
+  const text = getDashboardText(await db.getBots());
+  const msg = await ctx.reply(text, {
     reply_markup: mainMenu,
     parse_mode: 'Markdown',
     link_preview_options: { is_disabled: true }
@@ -1139,7 +1175,8 @@ async function handleAddBotUrl(ctx, gitUrl) {
     }, 4000);
 
     // Send the dashboard list
-    const msg = await ctx.reply('📋 *Bot Management Dashboard*', {
+    const text = getDashboardText(await db.getBots());
+    const msg = await ctx.reply(text, {
       reply_markup: mainMenu,
       parse_mode: 'Markdown',
       link_preview_options: { is_disabled: true }
