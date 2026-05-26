@@ -189,7 +189,7 @@ export async function cloneBot(bot) {
  * Installs dependencies for a bot (supports npm install or pip install)
  */
 export function installDependencies(bot) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     const dest = getBotPath(bot.id);
     if (!fs.existsSync(dest)) {
       return reject(new Error('Bot directory does not exist. Clone it first.'));
@@ -198,51 +198,63 @@ export function installDependencies(bot) {
     const runtime = detectLanguage(dest);
     console.log(`Installing dependencies for ${bot.name} (${runtime} runtime)...`);
 
-    let cmd = '';
-    let args = [];
-    let useShell = false;
+    const runPip = (packages) => new Promise((res, rej) => {
+      const child = spawn('python', ['-m', 'pip', 'install', '--quiet', ...packages], {
+        cwd: dest, shell: false
+      });
+      let err = '';
+      child.stderr.on('data', d => { err += d.toString(); });
+      child.on('close', code => code === 0 ? res() : rej(new Error(err.slice(0, 200))));
+      child.on('error', rej);
+    });
 
     if (runtime === 'node') {
       if (!fs.existsSync(path.join(dest, 'package.json'))) {
         console.log('No package.json found, skipping npm install.');
         return resolve();
       }
-      cmd = 'npm';
-      args = ['install', '--production'];
-      useShell = true;
+      const child = spawn('npm', ['install', '--production'], { cwd: dest, shell: true });
+      let errorOutput = '';
+      child.stderr.on('data', (data) => { errorOutput += data.toString(); });
+      child.on('close', (code) => {
+        if (code === 0) {
+          console.log(`Dependencies installed successfully for ${bot.name}.`);
+          resolve();
+        } else {
+          reject(new Error(`npm install failed with code ${code}. ${errorOutput.slice(0, 100)}`));
+        }
+      });
+      child.on('error', reject);
+
     } else if (runtime === 'python') {
-      if (!fs.existsSync(path.join(dest, 'requirements.txt'))) {
-        console.log('No requirements.txt found, skipping pip install.');
-        return resolve();
-      }
-      cmd = 'python';
-      args = ['-m', 'pip', 'install', '-r', 'requirements.txt'];
-      useShell = false;
-    } else {
-      console.log(`Unknown runtime runtime for bot ${bot.name}. Skipping installation.`);
-      return resolve();
-    }
+      try {
+        // Step 1: install from requirements.txt if it exists
+        if (fs.existsSync(path.join(dest, 'requirements.txt'))) {
+          console.log(`Running pip install -r requirements.txt for ${bot.name}...`);
+          await runPip(['-r', 'requirements.txt']);
+          console.log(`requirements.txt installed for ${bot.name}.`);
+        } else {
+          console.log('No requirements.txt found, skipping pip install.');
+        }
 
-    const child = spawn(cmd, args, { cwd: dest, shell: useShell });
-    let errorOutput = '';
+        // Step 2: auto-install asyncpg if the bot uses async database
+        if (needsAsyncpg(dest)) {
+          console.log(`${bot.name} needs asyncpg — ensuring it is installed...`);
+          await runPip(['asyncpg']);
+          console.log(`asyncpg installed for ${bot.name}.`);
+        }
 
-    child.stderr.on('data', (data) => {
-      errorOutput += data.toString();
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        console.log(`Dependencies installed successfully for ${bot.name}.`);
+        console.log(`All dependencies ready for ${bot.name}.`);
         resolve();
-      } else {
-        console.error(`Dependency install failed for ${bot.name} with code ${code}. Error: ${errorOutput}`);
-        reject(new Error(`Installation failed with code ${code}. ${errorOutput.slice(0, 100)}`));
+      } catch (err) {
+        console.error(`Dependency install failed for ${bot.name}: ${err.message}`);
+        reject(err);
       }
-    });
 
-    child.on('error', (err) => {
-      reject(err);
-    });
+    } else {
+      console.log(`Unknown runtime for bot ${bot.name}. Skipping installation.`);
+      resolve();
+    }
   });
 }
 
