@@ -33,7 +33,8 @@ export function getChildEnv(dest) {
     'PATH', 'PATHEXT', 'SYSTEMROOT', 'TEMP', 'TMP', 
     'USERPROFILE', 'HOME', 'LANG', 'LC_ALL', 'COMSPEC',
     'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'COMMONPROGRAMFILES',
-    'PROGRAMFILES', 'PROGRAMFILES(X86)', 'SYSTEMDRIVE'
+    'PROGRAMFILES', 'PROGRAMFILES(X86)', 'SYSTEMDRIVE',
+    'DATABASE_URL'  // always pass the master DB URL as a baseline
   ];
   
   for (const key of keepKeys) {
@@ -71,30 +72,68 @@ export function getChildEnv(dest) {
 
   // Normalise DATABASE_URL for the child process
   if (finalEnv.DATABASE_URL && typeof finalEnv.DATABASE_URL === 'string') {
-    let dbUrl = finalEnv.DATABASE_URL;
-
-    // Step 1: convert the short Heroku-style scheme
-    if (dbUrl.startsWith('postgres://')) {
-      dbUrl = dbUrl.replace('postgres://', 'postgresql://');
-    }
-
-    // Step 2: strip any sync driver already baked in (psycopg2 or similar)
-    dbUrl = dbUrl.replace('postgresql+psycopg2://', 'postgresql://');
-    dbUrl = dbUrl.replace('postgresql+psycopg://', 'postgresql://');
-
-    // Step 3: upgrade to asyncpg when the bot's requirements.txt needs it
-    const reqPath = path.join(dest, 'requirements.txt');
-    const needsAsync = fs.existsSync(reqPath) &&
-      fs.readFileSync(reqPath, 'utf8').toLowerCase().includes('asyncpg');
-
-    if (needsAsync && !dbUrl.includes('+asyncpg')) {
-      dbUrl = dbUrl.replace('postgresql://', 'postgresql+asyncpg://');
-    }
-
-    finalEnv.DATABASE_URL = dbUrl;
+    finalEnv.DATABASE_URL = normaliseDbUrl(finalEnv.DATABASE_URL, dest);
   }
 
   return finalEnv;
+}
+
+/**
+ * Determines whether the bot at `dest` needs asyncpg
+ * Checks requirements.txt and Python source files for create_async_engine
+ */
+function needsAsyncpg(dest) {
+  try {
+    const reqPath = path.join(dest, 'requirements.txt');
+    if (fs.existsSync(reqPath)) {
+      const reqs = fs.readFileSync(reqPath, 'utf8').toLowerCase();
+      if (reqs.includes('asyncpg')) return true;
+    }
+  } catch (e) {}
+
+  // Also scan Python source files for create_async_engine usage
+  try {
+    const scanDir = (dir) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === '__pycache__') continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (scanDir(full)) return true;
+        } else if (entry.name.endsWith('.py')) {
+          const content = fs.readFileSync(full, 'utf8');
+          if (content.includes('create_async_engine') || content.includes('asyncpg')) return true;
+        }
+      }
+      return false;
+    };
+    return scanDir(dest);
+  } catch (e) {}
+
+  return false;
+}
+
+/**
+ * Normalises a postgres DATABASE_URL, upgrading to asyncpg if needed
+ */
+function normaliseDbUrl(rawUrl, dest) {
+  let url = rawUrl;
+
+  // Convert Heroku-style short scheme
+  if (url.startsWith('postgres://')) {
+    url = url.replace('postgres://', 'postgresql://');
+  }
+
+  // Strip any sync driver that might already be baked in
+  url = url.replace(/postgresql\+psycopg2:\/\//, 'postgresql://');
+  url = url.replace(/postgresql\+psycopg:\/\//, 'postgresql://');
+
+  // Upgrade to asyncpg when the bot needs it
+  if (!url.includes('+asyncpg') && needsAsyncpg(dest)) {
+    url = url.replace('postgresql://', 'postgresql+asyncpg://');
+  }
+
+  return url;
 }
 
 /**
@@ -225,25 +264,18 @@ export function writeEnvFile(bot) {
     let parsedValue = typeof value === 'string' ? value : String(value);
 
     if (key === 'DATABASE_URL' && parsedValue) {
-      // Step 1: normalise Heroku-style scheme
-      if (parsedValue.startsWith('postgres://')) {
-        parsedValue = parsedValue.replace('postgres://', 'postgresql://');
-      }
-      // Step 2: strip any sync driver
-      parsedValue = parsedValue.replace('postgresql+psycopg2://', 'postgresql://');
-      parsedValue = parsedValue.replace('postgresql+psycopg://', 'postgresql://');
-
-      // Step 3: upgrade to asyncpg when the bot needs it
-      const reqPath = path.join(dest, 'requirements.txt');
-      const needsAsync = fs.existsSync(reqPath) &&
-        fs.readFileSync(reqPath, 'utf8').toLowerCase().includes('asyncpg');
-
-      if (needsAsync && !parsedValue.includes('+asyncpg')) {
-        parsedValue = parsedValue.replace('postgresql://', 'postgresql+asyncpg://');
-      }
+      parsedValue = normaliseDbUrl(parsedValue, dest);
     }
 
     envContent += `${key}=${parsedValue}\n`;
+  }
+
+  // If bot has no DATABASE_URL in its envVars but the master has one,
+  // inject the corrected URL so the child can always connect
+  if (!envContent.includes('DATABASE_URL=') && process.env.DATABASE_URL) {
+    const correctedUrl = normaliseDbUrl(process.env.DATABASE_URL, dest);
+    envContent += `DATABASE_URL=${correctedUrl}\n`;
+    console.log(`Injected DATABASE_URL for ${bot.name}: ${correctedUrl.split('@')[0].replace(/:([^:@]+)@/, ':***@')}...`);
   }
 
   if (!envContent.includes('PORT=')) {
