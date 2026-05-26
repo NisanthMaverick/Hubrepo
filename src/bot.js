@@ -277,6 +277,18 @@ const botControlMenu = new Menu('bot-control')
 
       // Check environment variables BEFORE answering processing to prevent double answers
       if (botData.status !== 'running') {
+        const allBots = await db.getBots();
+        const runningBotsCount = allBots.filter(b => b.status === 'running').length;
+        if (runningBotsCount >= CONFIG.MAX_CONCURRENT_BOTS) {
+          try {
+            await ctx.answerCallbackQuery({
+              text: `❌ Server limit reached! You can only run ${CONFIG.MAX_CONCURRENT_BOTS} bots in parallel. Please stop a bot first.`,
+              show_alert: true
+            });
+          } catch (e) {}
+          return;
+        }
+
         const envs = botData.envVars instanceof Map ? Object.fromEntries(botData.envVars) : botData.envVars || {};
         const keys = Object.keys(envs);
         const hasToken = keys.some(k => k.toLowerCase().includes('token'));
