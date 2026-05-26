@@ -281,12 +281,24 @@ const botControlMenu = new Menu('bot-control')
         const runningBotsCount = allBots.filter(b => b.status === 'running').length;
         const currentLimit = await db.getSetting('MAX_CONCURRENT_BOTS', 2);
         if (runningBotsCount >= currentLimit) {
-          try {
-            await ctx.answerCallbackQuery({
-              text: `❌ Server limit reached! You can only run ${currentLimit} bots in parallel. Please stop a bot first.`,
-              show_alert: true
-            });
-          } catch (e) {}
+          try { await ctx.answerCallbackQuery(); } catch (e) {}
+
+          const warningText = `⚠️ *Warning: Concurrent Limit Reached!*\n\n` +
+            `Your current limit is **${currentLimit}**. If you want to start this bot, you can increase the concurrent limit in settings (Note: increasing this limit may lead to crashing your server!).\n\n` +
+            `Otherwise, please stop another bot before starting this one.`;
+            
+          const limitKeyboard = new InlineKeyboard()
+            .text('⚙️ Go to Bot Settings', 'nav_settings_from_limit')
+            .row()
+            .text('⬅️ Back to Dashboard', 'nav_dashboard_from_limit');
+
+          try { await ctx.menu.close(); } catch (e) {}
+          
+          await ctx.editMessageText(warningText, {
+            parse_mode: 'Markdown',
+            reply_markup: limitKeyboard,
+            link_preview_options: { is_disabled: true }
+          });
           return;
         }
 
@@ -1034,6 +1046,27 @@ bot.callbackQuery('menu:back_start', async (ctx) => {
   await ctx.editMessageText(startText, { 
     parse_mode: 'Markdown', 
     reply_markup: startKeyboard,
+    link_preview_options: { is_disabled: true } 
+  });
+});
+
+bot.callbackQuery('nav_settings_from_limit', async (ctx) => {
+  userStates.delete(ctx.from.id);
+  try { await ctx.answerCallbackQuery(); } catch (e) {}
+  await ctx.editMessageText('⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.', { 
+    parse_mode: 'Markdown', 
+    reply_markup: settingsMenu,
+    link_preview_options: { is_disabled: true } 
+  });
+});
+
+bot.callbackQuery('nav_dashboard_from_limit', async (ctx) => {
+  userStates.delete(ctx.from.id);
+  try { await ctx.answerCallbackQuery(); } catch (e) {}
+  const text = getDashboardText(await db.getBots());
+  await ctx.editMessageText(text, { 
+    parse_mode: 'Markdown', 
+    reply_markup: mainMenu,
     link_preview_options: { is_disabled: true } 
   });
 });
