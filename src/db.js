@@ -248,7 +248,7 @@ export async function setSetting(key, value) {
   if (isPostgres) {
     await pool.query(
       `INSERT INTO settings (key, value) VALUES ($1, $2)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP`,
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [key, valStr]
     );
   } else {
