@@ -1276,17 +1276,9 @@ bot.on('message:text', async (ctx) => {
     await db.setSetting('MAX_CONCURRENT_BOTS', newLimit);
     
     const settingsText = '⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.';
-    try {
-      await ctx.api.editMessageText(
-        ctx.chat.id, 
-        state.menuMsgId, 
-        settingsText, 
-        { parse_mode: 'Markdown', reply_markup: settingsMenu, link_preview_options: { is_disabled: true } }
-      );
-    } catch (e) {
-      const msg = await ctx.reply(settingsText, { parse_mode: 'Markdown', reply_markup: settingsMenu, link_preview_options: { is_disabled: true } });
-      ctx.session.menuMsgId = msg.message_id;
-    }
+    
+    try { await ctx.api.deleteMessage(ctx.chat.id, state.menuMsgId); } catch (e) {}
+    await ctx.reply(settingsText, { parse_mode: 'Markdown', reply_markup: settingsMenu, link_preview_options: { is_disabled: true } });
   }
 });
 
