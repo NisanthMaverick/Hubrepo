@@ -74,6 +74,19 @@ export function getChildEnv(dest) {
     finalEnv.DATABASE_URL = finalEnv.DATABASE_URL.replace('postgres://', 'postgresql://');
   }
 
+  // Auto-upgrade to asyncpg if python bot requires it
+  if (finalEnv.DATABASE_URL && typeof finalEnv.DATABASE_URL === 'string' && finalEnv.DATABASE_URL.startsWith('postgresql://')) {
+    try {
+      const reqPath = path.join(dest, 'requirements.txt');
+      if (fs.existsSync(reqPath)) {
+        const reqs = fs.readFileSync(reqPath, 'utf8').toLowerCase();
+        if (reqs.includes('asyncpg')) {
+          finalEnv.DATABASE_URL = finalEnv.DATABASE_URL.replace('postgresql://', 'postgresql+asyncpg://');
+        }
+      }
+    } catch (e) {}
+  }
+
   return finalEnv;
 }
 
@@ -206,6 +219,19 @@ export function writeEnvFile(bot) {
     if (typeof value === 'string' && value.startsWith('postgres://')) {
       parsedValue = value.replace('postgres://', 'postgresql://');
     }
+    
+    if (key === 'DATABASE_URL' && typeof parsedValue === 'string' && parsedValue.startsWith('postgresql://')) {
+      try {
+        const reqPath = path.join(dest, 'requirements.txt');
+        if (fs.existsSync(reqPath)) {
+          const reqs = fs.readFileSync(reqPath, 'utf8').toLowerCase();
+          if (reqs.includes('asyncpg')) {
+            parsedValue = parsedValue.replace('postgresql://', 'postgresql+asyncpg://');
+          }
+        }
+      } catch (e) {}
+    }
+
     envContent += `${key}=${parsedValue}\n`;
   }
 
