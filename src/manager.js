@@ -430,6 +430,44 @@ export async function startBot(bot) {
       console.log(`Bot process ${bot.name} exited with code ${code}`);
       
       const logsText = botRecord.logs.map(log => log.text).join('\n');
+
+      // ── Auto-heal: detect missing Python modules and install them ──────────
+      const missingModuleMatch = logsText.match(/ModuleNotFoundError: No module named '([^']+)'/);
+      if (missingModuleMatch && runtime === 'python') {
+        const missingModule = missingModuleMatch[1].split('.')[0]; // top-level package name
+        addLog(`System: Missing module detected: '${missingModule}'. Auto-installing...`);
+        console.log(`Auto-installing missing module '${missingModule}' for ${bot.name}...`);
+
+        try {
+          await new Promise((res, rej) => {
+            const installProc = spawn('python', ['-m', 'pip', 'install', '--quiet', missingModule], {
+              cwd: dest, shell: false
+            });
+            installProc.on('close', c => c === 0 ? res() : rej(new Error(`pip exit ${c}`)));
+            installProc.on('error', rej);
+          });
+          addLog(`System: '${missingModule}' installed successfully. Restarting bot...`);
+          console.log(`Module '${missingModule}' installed. Restarting ${bot.name}...`);
+
+          if (!startupPassed) clearTimeout(startupTimeout);
+
+          // Restart after a short delay
+          setTimeout(async () => {
+            const reCheck = await db.getBot(botId);
+            if (reCheck) {
+              try { await startBot(reCheck); } catch (e) {
+                console.error(`Failed to restart ${bot.name} after module install:`, e);
+              }
+            }
+          }, 3000);
+          return; // Don't count this as a crash attempt
+        } catch (installErr) {
+          addLog(`System: Failed to auto-install '${missingModule}': ${installErr.message}`);
+          console.error(`Auto-install failed for module '${missingModule}':`, installErr);
+        }
+      }
+      // ────────────────────────────────────────────────────────────────────────
+
       const hasInvalidToken = logsText.includes('InvalidToken') || 
                               logsText.includes('rejected by the server') || 
                               logsText.includes('401 Unauthorized') ||
