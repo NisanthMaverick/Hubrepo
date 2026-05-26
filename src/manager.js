@@ -69,22 +69,29 @@ export function getChildEnv(dest) {
     NODE_NO_WARNINGS: '1'
   };
 
-  // Safe fallback for SQLAlchemy postgres:// dialect mapping
-  if (finalEnv.DATABASE_URL && typeof finalEnv.DATABASE_URL === 'string' && finalEnv.DATABASE_URL.startsWith('postgres://')) {
-    finalEnv.DATABASE_URL = finalEnv.DATABASE_URL.replace('postgres://', 'postgresql://');
-  }
+  // Normalise DATABASE_URL for the child process
+  if (finalEnv.DATABASE_URL && typeof finalEnv.DATABASE_URL === 'string') {
+    let dbUrl = finalEnv.DATABASE_URL;
 
-  // Auto-upgrade to asyncpg if python bot requires it
-  if (finalEnv.DATABASE_URL && typeof finalEnv.DATABASE_URL === 'string' && finalEnv.DATABASE_URL.startsWith('postgresql://')) {
-    try {
-      const reqPath = path.join(dest, 'requirements.txt');
-      if (fs.existsSync(reqPath)) {
-        const reqs = fs.readFileSync(reqPath, 'utf8').toLowerCase();
-        if (reqs.includes('asyncpg')) {
-          finalEnv.DATABASE_URL = finalEnv.DATABASE_URL.replace('postgresql://', 'postgresql+asyncpg://');
-        }
-      }
-    } catch (e) {}
+    // Step 1: convert the short Heroku-style scheme
+    if (dbUrl.startsWith('postgres://')) {
+      dbUrl = dbUrl.replace('postgres://', 'postgresql://');
+    }
+
+    // Step 2: strip any sync driver already baked in (psycopg2 or similar)
+    dbUrl = dbUrl.replace('postgresql+psycopg2://', 'postgresql://');
+    dbUrl = dbUrl.replace('postgresql+psycopg://', 'postgresql://');
+
+    // Step 3: upgrade to asyncpg when the bot's requirements.txt needs it
+    const reqPath = path.join(dest, 'requirements.txt');
+    const needsAsync = fs.existsSync(reqPath) &&
+      fs.readFileSync(reqPath, 'utf8').toLowerCase().includes('asyncpg');
+
+    if (needsAsync && !dbUrl.includes('+asyncpg')) {
+      dbUrl = dbUrl.replace('postgresql://', 'postgresql+asyncpg://');
+    }
+
+    finalEnv.DATABASE_URL = dbUrl;
   }
 
   return finalEnv;
@@ -215,21 +222,25 @@ export function writeEnvFile(bot) {
   const vars = bot.envVars instanceof Map ? Object.fromEntries(bot.envVars) : bot.envVars || {};
 
   for (const [key, value] of Object.entries(vars)) {
-    let parsedValue = value;
-    if (typeof value === 'string' && value.startsWith('postgres://')) {
-      parsedValue = value.replace('postgres://', 'postgresql://');
-    }
-    
-    if (key === 'DATABASE_URL' && typeof parsedValue === 'string' && parsedValue.startsWith('postgresql://')) {
-      try {
-        const reqPath = path.join(dest, 'requirements.txt');
-        if (fs.existsSync(reqPath)) {
-          const reqs = fs.readFileSync(reqPath, 'utf8').toLowerCase();
-          if (reqs.includes('asyncpg')) {
-            parsedValue = parsedValue.replace('postgresql://', 'postgresql+asyncpg://');
-          }
-        }
-      } catch (e) {}
+    let parsedValue = typeof value === 'string' ? value : String(value);
+
+    if (key === 'DATABASE_URL' && parsedValue) {
+      // Step 1: normalise Heroku-style scheme
+      if (parsedValue.startsWith('postgres://')) {
+        parsedValue = parsedValue.replace('postgres://', 'postgresql://');
+      }
+      // Step 2: strip any sync driver
+      parsedValue = parsedValue.replace('postgresql+psycopg2://', 'postgresql://');
+      parsedValue = parsedValue.replace('postgresql+psycopg://', 'postgresql://');
+
+      // Step 3: upgrade to asyncpg when the bot needs it
+      const reqPath = path.join(dest, 'requirements.txt');
+      const needsAsync = fs.existsSync(reqPath) &&
+        fs.readFileSync(reqPath, 'utf8').toLowerCase().includes('asyncpg');
+
+      if (needsAsync && !parsedValue.includes('+asyncpg')) {
+        parsedValue = parsedValue.replace('postgresql://', 'postgresql+asyncpg://');
+      }
     }
 
     envContent += `${key}=${parsedValue}\n`;
