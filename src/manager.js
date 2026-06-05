@@ -79,19 +79,11 @@ export function getChildEnv(dest) {
 }
 
 /**
- * Determines whether the bot at `dest` needs asyncpg
- * Checks requirements.txt and Python source files for create_async_engine
+ * Scans Python source files for create_async_engine (SQLAlchemy async).
+ * Returns true ONLY for SQLAlchemy-style async - these need postgresql+asyncpg://
+ * Bots that use asyncpg.create_pool() directly need plain postgresql:// instead.
  */
-function needsAsyncpg(dest) {
-  try {
-    const reqPath = path.join(dest, 'requirements.txt');
-    if (fs.existsSync(reqPath)) {
-      const reqs = fs.readFileSync(reqPath, 'utf8').toLowerCase();
-      if (reqs.includes('asyncpg')) return true;
-    }
-  } catch (e) {}
-
-  // Also scan Python source files for create_async_engine usage
+function usesSQLAlchemyAsync(dest) {
   try {
     const scanDir = (dir) => {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -102,36 +94,81 @@ function needsAsyncpg(dest) {
           if (scanDir(full)) return true;
         } else if (entry.name.endsWith('.py')) {
           const content = fs.readFileSync(full, 'utf8');
-          if (content.includes('create_async_engine') || content.includes('asyncpg')) return true;
+          if (content.includes('create_async_engine')) return true;
         }
       }
       return false;
     };
     return scanDir(dest);
   } catch (e) {}
-
   return false;
 }
 
 /**
- * Normalises a postgres DATABASE_URL, upgrading to asyncpg if needed
+ * Returns true if the bot uses asyncpg directly (asyncpg.create_pool / asyncpg.connect).
+ * These bots need plain postgresql:// - NOT postgresql+asyncpg://
+ */
+function usesDirectAsyncpg(dest) {
+  try {
+    const scanDir = (dir) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === '__pycache__') continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (scanDir(full)) return true;
+        } else if (entry.name.endsWith('.py')) {
+          const content = fs.readFileSync(full, 'utf8');
+          if (content.includes('asyncpg.connect') || content.includes('asyncpg.create_pool')) return true;
+        }
+      }
+      return false;
+    };
+    return scanDir(dest);
+  } catch (e) {}
+  return false;
+}
+
+/**
+ * Returns true if the bot has asyncpg in requirements.txt - used only for
+ * pip install decisions, NOT for URL scheme selection.
+ */
+function hasAsyncpgInRequirements(dest) {
+  try {
+    const reqPath = path.join(dest, 'requirements.txt');
+    if (fs.existsSync(reqPath)) {
+      return fs.readFileSync(reqPath, 'utf8').toLowerCase().includes('asyncpg');
+    }
+  } catch (e) {}
+  return false;
+}
+
+/**
+ * Normalises a postgres DATABASE_URL to the correct scheme for this bot:
+ *  - SQLAlchemy (create_async_engine)  → postgresql+asyncpg://
+ *  - asyncpg direct (create_pool etc.) → postgresql://
+ *  - sync / other                      → postgresql://
  */
 function normaliseDbUrl(rawUrl, dest) {
   let url = rawUrl;
 
-  // Convert Heroku-style short scheme
+  // 1. Convert Heroku-style short scheme
   if (url.startsWith('postgres://')) {
     url = url.replace('postgres://', 'postgresql://');
   }
 
-  // Strip any sync driver that might already be baked in
+  // 2. Strip any sync driver prefix already baked in
   url = url.replace(/postgresql\+psycopg2:\/\//, 'postgresql://');
   url = url.replace(/postgresql\+psycopg:\/\//, 'postgresql://');
 
-  // Upgrade to asyncpg when the bot needs it
-  if (!url.includes('+asyncpg') && needsAsyncpg(dest)) {
+  // 3. Also strip postgresql+asyncpg:// back to plain if present – we'll re-add only when needed
+  url = url.replace(/postgresql\+asyncpg:\/\//, 'postgresql://');
+
+  // 4. Only add +asyncpg prefix for SQLAlchemy-based async bots
+  if (usesSQLAlchemyAsync(dest) && !usesDirectAsyncpg(dest)) {
     url = url.replace('postgresql://', 'postgresql+asyncpg://');
   }
+  // Bots using asyncpg directly (asyncpg.create_pool) keep plain postgresql://
 
   return url;
 }
@@ -237,11 +274,11 @@ export function installDependencies(bot) {
           console.log('No requirements.txt found, skipping pip install.');
         }
 
-        // Step 2: auto-install asyncpg if the bot uses async database
-        if (needsAsyncpg(dest)) {
-          console.log(`${bot.name} needs asyncpg — ensuring it is installed...`);
+        // Step 2: auto-install asyncpg if the bot uses it (either via SQLAlchemy or directly)
+        if (!hasAsyncpgInRequirements(dest) && (usesSQLAlchemyAsync(dest) || usesDirectAsyncpg(dest))) {
+          console.log(`${bot.name} uses asyncpg but it's not in requirements.txt — auto-installing...`);
           await runPip(['asyncpg']);
-          console.log(`asyncpg installed for ${bot.name}.`);
+          console.log(`asyncpg auto-installed for ${bot.name}.`);
         }
 
         console.log(`All dependencies ready for ${bot.name}.`);
