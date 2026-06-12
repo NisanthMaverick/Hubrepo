@@ -189,8 +189,10 @@ export function detectLanguage(dest) {
   const hasRequirements = fs.existsSync(path.join(dest, 'requirements.txt'));
   const hasMainPy = fs.existsSync(path.join(dest, 'main.py'));
   const hasBotPy = fs.existsSync(path.join(dest, 'bot.py'));
+  const hasRunPy = fs.existsSync(path.join(dest, 'run.py'));
+  const hasAppPy = fs.existsSync(path.join(dest, 'app.py'));
   
-  if (hasRequirements || hasMainPy || hasBotPy) {
+  if (hasRequirements || hasMainPy || hasBotPy || hasRunPy || hasAppPy) {
     return 'python';
   }
 
@@ -388,10 +390,14 @@ export async function startBot(bot) {
     // -u flag disables buffering in stdout/stderr, enabling real-time logging
     args = ['-u']; 
     
-    if (fs.existsSync(path.join(dest, 'main.py'))) {
+    if (fs.existsSync(path.join(dest, 'run.py'))) {
+      args.push('run.py');
+    } else if (fs.existsSync(path.join(dest, 'main.py'))) {
       args.push('main.py');
     } else if (fs.existsSync(path.join(dest, 'bot.py'))) {
       args.push('bot.py');
+    } else if (fs.existsSync(path.join(dest, 'app.py'))) {
+      args.push('app.py');
     } else {
       const files = fs.readdirSync(dest);
       const pyFile = files.find(f => f.endsWith('.py'));
