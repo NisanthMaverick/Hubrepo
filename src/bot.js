@@ -740,6 +740,43 @@ const botControlMenu = new Menu('bot-control')
     await editMenuText(ctx, text);
     ctx.menu.update();
   })
+  .text('🔍 Check DB', async (ctx) => {
+    userStates.delete(ctx.from.id);
+    const botId = ctx.session?.currentBotId;
+    if (!botId) return ctx.reply('No bot selected.');
+    const botData = await db.getBot(botId);
+    if (!botData) return;
+
+    try { await ctx.answerCallbackQuery('Checking database connection...'); } catch (e) {}
+    
+    const envs = botData.envVars instanceof Map ? Object.fromEntries(botData.envVars) : botData.envVars || {};
+    const dbUrl = envs.DATABASE_URL;
+
+    if (!dbUrl) {
+      return ctx.reply(`❌ *Database Check for ${botData.name} Failed:*\nNo DATABASE_URL configured for this bot.`, { parse_mode: 'Markdown' });
+    }
+
+    try {
+      const pgModule = await import('pg');
+      const Pool = pgModule.default?.Pool || pgModule.Pool;
+      const pool = new Pool({
+        connectionString: dbUrl,
+        ssl: dbUrl.includes('sslmode=require') || !dbUrl.includes('localhost')
+          ? { rejectUnauthorized: false }
+          : false,
+        connectionTimeoutMillis: 5000
+      });
+
+      const client = await pool.connect();
+      await client.query('SELECT NOW()');
+      client.release();
+      await pool.end();
+
+      await ctx.reply(`🟢 *Database Check for ${botData.name}:*\nConnection successful! Database is online.`, { parse_mode: 'Markdown' });
+    } catch (err) {
+      await ctx.reply(`🔴 *Database Check for ${botData.name} Failed:*\n\`\`\`\n${err.message}\n\`\`\``, { parse_mode: 'Markdown' });
+    }
+  })
   .row()
   .text('🗑️ Delete Bot', async (ctx) => {
     userStates.delete(ctx.from.id);
