@@ -698,3 +698,61 @@ export async function updateBotCode(bot) {
   writeEnvFile(bot);
   await startBot(bot);
 }
+
+/**
+ * Scans the bots directory on disk and reconstructs bot records in the database.
+ * Useful when the database gets lost, reset, or changed, and needs to be rebuilt
+ * from the active filesystem state.
+ */
+export async function restoreBotsFromDisk() {
+  ensureBotsDir();
+  const botsDir = CONFIG.BOTS_DIR;
+  
+  if (!fs.existsSync(botsDir)) {
+    return { success: true, count: 0 };
+  }
+
+  const entries = fs.readdirSync(botsDir);
+  let count = 0;
+
+  for (const entry of entries) {
+    const fullPath = path.join(botsDir, entry);
+    const stat = fs.statSync(fullPath);
+    
+    if (!stat.isDirectory()) continue;
+
+    const gitDir = path.join(fullPath, '.git');
+    if (!fs.existsSync(gitDir)) continue;
+
+    try {
+      const git = simpleGit(fullPath);
+      const remotes = await git.getRemotes(true);
+      const origin = remotes.find(r => r.name === 'origin');
+      if (!origin || !origin.refs.push) continue;
+      const gitUrl = origin.refs.push;
+
+      let name = entry;
+      try {
+        const parts = gitUrl.replace(/\.git$/, '').split('/');
+        name = parts[parts.length - 1] || entry;
+      } catch (e) {}
+
+      let envVars = {};
+      const envPath = path.join(fullPath, '.env');
+      if (fs.existsSync(envPath)) {
+        try {
+          envVars = dotenv.parse(fs.readFileSync(envPath));
+        } catch (e) {
+          console.error(`Failed to parse .env for bot ${entry}:`, e);
+        }
+      }
+
+      await db.upsertBot(entry, name, gitUrl, envVars);
+      count++;
+    } catch (err) {
+      console.error(`Failed to restore bot from folder "${entry}":`, err);
+    }
+  }
+
+  return { success: true, count };
+}

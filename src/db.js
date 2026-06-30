@@ -257,3 +257,56 @@ export async function setSetting(key, value) {
     writeJsonSettings(settings);
   }
 }
+
+export async function upsertBot(id, name, gitUrl, envVars) {
+  if (isPostgres) {
+    const parsedId = parseInt(id, 10);
+    if (!isNaN(parsedId)) {
+      const check = await pool.query('SELECT * FROM bots WHERE id = $1', [parsedId]);
+      if (check.rows.length) {
+        const res = await pool.query(
+          'UPDATE bots SET name = $1, git_url = $2, env_vars = $3 WHERE id = $4 RETURNING *',
+          [name, gitUrl, JSON.stringify(envVars), parsedId]
+        );
+        return mapFromRow(res.rows[0]);
+      } else {
+        const res = await pool.query(
+          'INSERT INTO bots (id, name, git_url, env_vars, is_active, status) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+          [parsedId, name, gitUrl, JSON.stringify(envVars), false, 'stopped']
+        );
+        // Reset the serial sequence to max id + 1 to prevent collisions later
+        try {
+          await pool.query("SELECT setval(pg_get_serial_sequence('bots', 'id'), COALESCE((SELECT MAX(id) FROM bots), 1), true)");
+        } catch (e) {
+          console.error('Failed to reset pg serial sequence:', e);
+        }
+        return mapFromRow(res.rows[0]);
+      }
+    } else {
+      const res = await pool.query(
+        'INSERT INTO bots (name, git_url, env_vars, is_active, status) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        [name, gitUrl, JSON.stringify(envVars), false, 'stopped']
+      );
+      return mapFromRow(res.rows[0]);
+    }
+  } else {
+    const bots = readJsonDB();
+    const idx = bots.findIndex(b => b.id === id);
+    const botData = {
+      id,
+      name,
+      gitUrl,
+      envVars,
+      isActive: false,
+      status: 'stopped',
+      createdAt: new Date().toISOString()
+    };
+    if (idx !== -1) {
+      bots[idx] = { ...bots[idx], ...botData, envVars: { ...bots[idx].envVars, ...envVars } };
+    } else {
+      bots.push(botData);
+    }
+    writeJsonDB(bots);
+    return botData;
+  }
+}

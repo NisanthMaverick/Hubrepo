@@ -890,22 +890,35 @@ mainMenu.text('🔄 Refresh', async (ctx) => {
   try { await ctx.answerCallbackQuery('Refreshed!'); } catch (e) {}
   const freshBots = await db.getBots();
   const text = getDashboardText(freshBots);
-  await ctx.editMessageText(text, { 
-    parse_mode: 'Markdown', 
-    reply_markup: mainMenu,
-    link_preview_options: { is_disabled: true } 
-  });
+  await editMenuText(ctx, text);
+  ctx.menu.update();
 })
 .text('➕ Add Bot', async (ctx) => {
   userStates.delete(ctx.from.id);
   try { await ctx.answerCallbackQuery(); } catch (e) {}
   await promptAddBot(ctx);
 }).row()
+.text('📥 Restore from Disk', async (ctx) => {
+  userStates.delete(ctx.from.id);
+  try { await ctx.answerCallbackQuery('Restoring...'); } catch (e) {}
+  
+  const statusMsg = await ctx.reply('⏳ Scanning `bots/` folder and restoring records...');
+  const res = await manager.restoreBotsFromDisk();
+  
+  try { await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id); } catch (e) {}
+  
+  await ctx.reply(`✅ *Restore complete!*\nRestored/updated **${res.count}** bots from disk.`, { parse_mode: 'Markdown' });
+  
+  const freshBots = await db.getBots();
+  const text = getDashboardText(freshBots);
+  await editMenuText(ctx, text);
+  ctx.menu.update();
+})
 .text('⚙️ Settings', async (ctx) => {
   userStates.delete(ctx.from.id);
   await editMenuText(ctx, '⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.');
   ctx.menu.nav('settings-menu');
-})
+}).row()
 .text('⬅️ Back to Home', async (ctx) => {
   userStates.delete(ctx.from.id);
   await ctx.editMessageText(startText, { 
