@@ -843,7 +843,6 @@ export const dbActionsMenu = new Menu('db-actions')
 
 // 3. Settings Menu
 export const settingsMenu = new Menu('settings-menu');
-settingsMenu.register(dbActionsMenu);
 
 settingsMenu.dynamic(async (ctx, range) => {
   const currentLimit = await db.getSetting('MAX_CONCURRENT_BOTS', 2);
@@ -901,6 +900,8 @@ settingsMenu.text('⬅️ Back to Dashboard', async (ctx) => {
   await editMenuText(ctx, text);
   ctx.menu.nav('main-menu');
 });
+
+settingsMenu.register(dbActionsMenu);
 
 // 4. Main Menu
 export const mainMenu = new Menu('main-menu');
