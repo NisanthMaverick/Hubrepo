@@ -84,7 +84,7 @@ function getDashboardText(bots) {
       const uptime = manager.getBotUptime(b.id) || '0s';
       uptimeStr = ` | ⏱️ \`${uptime}\``;
     }
-    text += `${statusEmoji} *${b.name}*\n└ Status: ${b.status.toUpperCase()}${uptimeStr}\n\n`;
+    text += `${statusEmoji} *${b.name}*\n└ Status: ${(b.status || 'stopped').toUpperCase()}${uptimeStr}\n\n`;
   }
   return text.trim();
 }
@@ -103,7 +103,7 @@ function getBotDetailsText(botData) {
 
   return `🤖 *Bot Dashboard:* \`${botData.name}\`\n` +
     `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-    `⚡ *Status:* ${statusEmoji} ${botData.status.toUpperCase()}${uptimeStr}\n` +
+    `⚡ *Status:* ${statusEmoji} ${(botData.status || 'stopped').toUpperCase()}${uptimeStr}\n` +
     `🔗 *Git Repo:* [GitHub Repository](${botData.gitUrl})\n` +
     `⚙️ *Environment Variables:* \`${envCount} configured\`\n` +
     `🚀 *Boot Recovery:* ${botData.isActive ? '✅ Enabled' : '❌ Disabled'}\n` +
@@ -241,11 +241,8 @@ const logsMenu = new Menu('logs-menu')
       `━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
       `\`\`\`\n${displayLogs}\n\`\`\``;
 
-    await ctx.editMessageText(text, { 
-      parse_mode: 'Markdown', 
-      reply_markup: logsMenu,
-      link_preview_options: { is_disabled: true } 
-    });
+    await editMenuText(ctx, text);
+    ctx.menu.update();
   })
   .row()
   .text('⬅️ Bot Dashboard', async (ctx) => {
@@ -255,11 +252,7 @@ const logsMenu = new Menu('logs-menu')
     if (!botData) return ctx.menu.back();
 
     const text = getBotDetailsText(botData);
-    await ctx.editMessageText(text, { 
-      parse_mode: 'Markdown', 
-      reply_markup: botControlMenu,
-      link_preview_options: { is_disabled: true } 
-    });
+    await editMenuText(ctx, text);
     ctx.menu.nav('bot-control');
   });
 
@@ -329,13 +322,8 @@ const botControlMenu = new Menu('bot-control')
         // Re-render dashboard
         const updatedBot = await db.getBot(botId);
         const text = getBotDetailsText(updatedBot);
-        try {
-          await ctx.editMessageText(text, {
-            parse_mode: 'Markdown',
-            reply_markup: botControlMenu,
-            link_preview_options: { is_disabled: true }
-          });
-        } catch (e) {}
+        await editMenuText(ctx, text);
+        ctx.menu.update();
       } else {
         // Close menu immediately to remove buttons and prevent re-render
         try { await ctx.menu.close(); } catch (e) {}
@@ -823,21 +811,14 @@ settingsMenu.text('🔄 Restart All Bots', async (ctx) => {
     }
   }
 
-  await ctx.editMessageText(`✅ Successfully restarted ${runningBots.length} bots.\n\n⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.`, {
-    parse_mode: 'Markdown',
-    reply_markup: settingsMenu,
-    link_preview_options: { is_disabled: true }
-  });
+  await editMenuText(ctx, `✅ Successfully restarted ${runningBots.length} bots.\n\n⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.`);
+  ctx.menu.update();
 }).row();
 
 settingsMenu.text('⬅️ Back to Dashboard', async (ctx) => {
   userStates.delete(ctx.from.id);
   const text = getDashboardText(await db.getBots());
-  await ctx.editMessageText(text, { 
-    parse_mode: 'Markdown', 
-    reply_markup: mainMenu,
-    link_preview_options: { is_disabled: true } 
-  });
+  await editMenuText(ctx, text);
   ctx.menu.nav('main-menu');
 });
 
@@ -859,11 +840,8 @@ mainMenu.dynamic(async (ctx, range) => {
 
         const text = getBotDetailsText(b);
 
-        await ctx.editMessageText(text, { 
-          parse_mode: 'Markdown', 
-          reply_markup: botControlMenu,
-          link_preview_options: { is_disabled: true } 
-        });
+        await editMenuText(ctx, text);
+        ctx.menu.nav('bot-control');
       });
       if ((i + 1) % 2 === 0) range.row();
     });
@@ -888,11 +866,7 @@ mainMenu.text('🔄 Refresh', async (ctx) => {
 }).row()
 .text('⚙️ Settings', async (ctx) => {
   userStates.delete(ctx.from.id);
-  await ctx.editMessageText('⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.', { 
-    parse_mode: 'Markdown', 
-    reply_markup: settingsMenu,
-    link_preview_options: { is_disabled: true } 
-  });
+  await editMenuText(ctx, '⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.');
   ctx.menu.nav('settings-menu');
 })
 .text('⬅️ Back to Home', async (ctx) => {
