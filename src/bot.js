@@ -740,43 +740,6 @@ const botControlMenu = new Menu('bot-control')
     await editMenuText(ctx, text);
     ctx.menu.update();
   })
-  .text('🔍 Check DB', async (ctx) => {
-    userStates.delete(ctx.from.id);
-    const botId = ctx.session?.currentBotId;
-    if (!botId) return ctx.reply('No bot selected.');
-    const botData = await db.getBot(botId);
-    if (!botData) return;
-
-    try { await ctx.answerCallbackQuery('Checking database connection...'); } catch (e) {}
-    
-    const envs = botData.envVars instanceof Map ? Object.fromEntries(botData.envVars) : botData.envVars || {};
-    const dbUrl = envs.DATABASE_URL;
-
-    if (!dbUrl) {
-      return ctx.reply(`❌ *Database Check for ${botData.name} Failed:*\nNo DATABASE_URL configured for this bot.`, { parse_mode: 'Markdown' });
-    }
-
-    try {
-      const pgModule = await import('pg');
-      const Pool = pgModule.default?.Pool || pgModule.Pool;
-      const pool = new Pool({
-        connectionString: dbUrl,
-        ssl: dbUrl.includes('sslmode=require') || !dbUrl.includes('localhost')
-          ? { rejectUnauthorized: false }
-          : false,
-        connectionTimeoutMillis: 5000
-      });
-
-      const client = await pool.connect();
-      await client.query('SELECT NOW()');
-      client.release();
-      await pool.end();
-
-      await ctx.reply(`🟢 *Database Check for ${botData.name}:*\nConnection successful! Database is online.`, { parse_mode: 'Markdown' });
-    } catch (err) {
-      await ctx.reply(`🔴 *Database Check for ${botData.name} Failed:*\n\`\`\`\n${err.message}\n\`\`\``, { parse_mode: 'Markdown' });
-    }
-  })
   .row()
   .text('🗑️ Delete Bot', async (ctx) => {
     userStates.delete(ctx.from.id);
@@ -804,8 +767,83 @@ const botControlMenu = new Menu('bot-control')
 botControlMenu.register(envMenu);
 botControlMenu.register(logsMenu);
 
+// 3b. Database Actions Menu
+export const dbActionsMenu = new Menu('db-actions')
+  .text('🔍 Check Master DB', async (ctx) => {
+    userStates.delete(ctx.from.id);
+    try { await ctx.answerCallbackQuery('Checking Master DB...'); } catch (e) {}
+    
+    const dbUrl = process.env.DATABASE_URL;
+    if (!dbUrl) {
+      return ctx.reply('❌ DATABASE_URL is not configured.');
+    }
+    
+    try {
+      const pgModule = await import('pg');
+      const Pool = pgModule.default?.Pool || pgModule.Pool;
+      const pool = new Pool({
+        connectionString: dbUrl,
+        ssl: dbUrl.includes('sslmode=require') || !dbUrl.includes('localhost')
+          ? { rejectUnauthorized: false }
+          : false,
+        connectionTimeoutMillis: 5000
+      });
+
+      const client = await pool.connect();
+      await client.query('SELECT NOW()');
+      client.release();
+      await pool.end();
+
+      await ctx.reply('🟢 *Master Database Check:*\nConnection successful! Database is online.', { parse_mode: 'Markdown' });
+    } catch (err) {
+      await ctx.reply(`🔴 *Master Database Check Failed:*\n\`\`\`\n${err.message}\n\`\`\``, { parse_mode: 'Markdown' });
+    }
+  })
+  .row()
+  .text('📤 Export JSON', async (ctx) => {
+    userStates.delete(ctx.from.id);
+    try { await ctx.answerCallbackQuery('Exporting...'); } catch (e) {}
+    
+    try {
+      const bots = await db.getBots();
+      const jsonStr = JSON.stringify(bots, null, 2);
+      
+      if (jsonStr.length < 4000) {
+        await ctx.reply(`📤 *Exported Bot Configurations:*\nCopy and save this JSON block:\n\n\`\`\`json\n${jsonStr}\n\`\`\``, { parse_mode: 'Markdown' });
+      } else {
+        const buffer = Buffer.from(jsonStr, 'utf-8');
+        await ctx.replyWithDocument({ source: buffer, filename: 'bots_export.json' }, {
+          caption: '📤 Exported Bot Configurations (JSON file)'
+        });
+      }
+    } catch (err) {
+      await ctx.reply(`❌ Export failed: ${err.message}`);
+    }
+  })
+  .text('📥 Import JSON', async (ctx) => {
+    userStates.delete(ctx.from.id);
+    try { await ctx.answerCallbackQuery(); } catch (e) {}
+    
+    const promptMsg = await ctx.reply('📥 Please send the **JSON block** representing your bots configuration.', {
+      parse_mode: 'Markdown'
+    });
+    
+    userStates.set(ctx.from.id, { 
+      action: 'awaiting_import_json', 
+      promptMsgId: promptMsg.message_id,
+      menuMsgId: ctx.msg?.message_id
+    });
+  })
+  .row()
+  .text('⬅️ Back to Settings', async (ctx) => {
+    userStates.delete(ctx.from.id);
+    await editMenuText(ctx, '⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.');
+    ctx.menu.nav('settings-menu');
+  });
+
 // 3. Settings Menu
 export const settingsMenu = new Menu('settings-menu');
+settingsMenu.register(dbActionsMenu);
 
 settingsMenu.dynamic(async (ctx, range) => {
   const currentLimit = await db.getSetting('MAX_CONCURRENT_BOTS', 2);
@@ -850,6 +888,11 @@ settingsMenu.text('🔄 Restart All Bots', async (ctx) => {
 
   await editMenuText(ctx, `✅ Successfully restarted ${runningBots.length} bots.\n\n⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.`);
   ctx.menu.update();
+}).row()
+.text('⚙️ DB Actions', async (ctx) => {
+  userStates.delete(ctx.from.id);
+  await editMenuText(ctx, '⚙️ *Database Actions*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nCheck database connection, export configuration JSON, or import bot backups.');
+  ctx.menu.nav('db-actions');
 }).row();
 
 settingsMenu.text('⬅️ Back to Dashboard', async (ctx) => {
@@ -1303,6 +1346,54 @@ bot.on('message:text', async (ctx) => {
     
     try { await ctx.api.deleteMessage(ctx.chat.id, state.menuMsgId); } catch (e) {}
     await ctx.reply(settingsText, { parse_mode: 'Markdown', reply_markup: settingsMenu, link_preview_options: { is_disabled: true } });
+  }
+  
+  // 5. Handling Import JSON block
+  else if (state.action === 'awaiting_import_json') {
+    userStates.delete(userId);
+    
+    // Clean up input messages
+    try { await ctx.deleteMessage(); } catch (e) {}
+    try { await ctx.api.deleteMessage(ctx.chat.id, state.promptMsgId); } catch (e) {}
+
+    try {
+      const botsList = JSON.parse(text);
+      if (!Array.isArray(botsList)) {
+        throw new Error('JSON is not an array of bots.');
+      }
+
+      let importCount = 0;
+      for (const b of botsList) {
+        if (!b.name || !b.gitUrl) continue;
+        const id = b.id || (Date.now() + importCount).toString();
+        const envVars = b.envVars || {};
+        await db.upsertBot(id.toString(), b.name, b.gitUrl, envVars);
+        importCount++;
+      }
+
+      const successMsg = await ctx.reply(`✅ *Import complete!*\nSuccessfully imported/updated **${importCount}** bots in the database.`, { parse_mode: 'Markdown' });
+      setTimeout(() => {
+        try { ctx.api.deleteMessage(ctx.chat.id, successMsg.message_id); } catch (e) {}
+      }, 5000);
+
+      // Re-show settings menu
+      const settingsText = '⚙️ *Global Master Settings*\n━━━━━━━━━━━━━━━━━━━━━━━━━\nManage your server limits and global actions here.';
+      try {
+        await ctx.api.editMessageText(
+          ctx.chat.id, 
+          state.menuMsgId, 
+          settingsText, 
+          { parse_mode: 'Markdown', reply_markup: settingsMenu, link_preview_options: { is_disabled: true } }
+        );
+      } catch (e) {
+        const msg = await ctx.reply(settingsText, { parse_mode: 'Markdown', reply_markup: settingsMenu, link_preview_options: { is_disabled: true } });
+        ctx.session.menuMsgId = msg.message_id;
+      }
+
+    } catch (err) {
+      console.error('Import JSON failed:', err);
+      await ctx.reply(`❌ *Import Failed:*\n\`\`\`\n${err.message}\n\`\`\`\nPlease make sure you sent a valid exported bot JSON block.`, { parse_mode: 'Markdown' });
+    }
   }
 });
 
