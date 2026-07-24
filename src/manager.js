@@ -498,9 +498,14 @@ export async function startBot(bot) {
           setTimeout(async () => {
             const reCheck = await db.getBot(botId);
             if (reCheck) {
-              try { await startBot(reCheck); } catch (e) {
-                console.error(`Failed to restart ${bot.name} after module install:`, e);
+              try { 
+                const resVal = await startBot(reCheck);
+                resolve(resVal);
+              } catch (e) {
+                reject(e);
               }
+            } else {
+              reject(new Error('Bot config not found in database during auto-heal restart.'));
             }
           }, 3000);
           return; // Don't count this as a crash attempt
