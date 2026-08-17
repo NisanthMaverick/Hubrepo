@@ -773,7 +773,7 @@ export const dbActionsMenu = new Menu('db-actions')
     userStates.delete(ctx.from.id);
     try { await ctx.answerCallbackQuery('Checking Master DB...'); } catch (e) {}
     
-    const dbUrl = process.env.DATABASE_URL;
+    let dbUrl = process.env.DATABASE_URL;
     if (!dbUrl) {
       return ctx.reply('❌ DATABASE_URL is not configured.');
     }
@@ -781,12 +781,22 @@ export const dbActionsMenu = new Menu('db-actions')
     try {
       const pgModule = await import('pg');
       const Pool = pgModule.default?.Pool || pgModule.Pool;
+      
+      // Silence SSL mode warnings for pg-connection-string
+      if (dbUrl.includes('sslmode=require') && !dbUrl.includes('uselibpqcompat=true')) {
+        dbUrl += (dbUrl.includes('?') ? '&' : '?') + 'uselibpqcompat=true';
+      }
+
       const pool = new Pool({
         connectionString: dbUrl,
         ssl: dbUrl.includes('sslmode=require') || !dbUrl.includes('localhost')
           ? { rejectUnauthorized: false }
           : false,
         connectionTimeoutMillis: 5000
+      });
+
+      pool.on('error', (err) => {
+        console.error('Temporary database pool check error:', err.message || err);
       });
 
       const client = await pool.connect();

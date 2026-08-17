@@ -33,11 +33,21 @@ async function run() {
   }
 
   console.log(`Connecting to database to restore ${bots.length} bots...`);
+  
+  let connectionString = dbUri;
+  if (connectionString.includes('sslmode=require') && !connectionString.includes('uselibpqcompat=true')) {
+    connectionString += (connectionString.includes('?') ? '&' : '?') + 'uselibpqcompat=true';
+  }
+
   const pool = new Pool({
-    connectionString: dbUri,
-    ssl: dbUri.includes('sslmode=require') || !dbUri.includes('localhost')
+    connectionString: connectionString,
+    ssl: connectionString.includes('sslmode=require') || !connectionString.includes('localhost')
       ? { rejectUnauthorized: false }
       : false
+  });
+
+  pool.on('error', (err) => {
+    console.error('Seeder database pool error:', err.message || err);
   });
 
   try {

@@ -23,16 +23,27 @@ if (!fs.existsSync(JSON_SETTINGS_FILE)) {
 }
 
 export async function connectDB() {
-  const dbUri = process.env.DATABASE_URL || CONFIG.MONGODB_URI;
+  let dbUri = process.env.DATABASE_URL || CONFIG.MONGODB_URI;
 
   if (dbUri && (dbUri.startsWith('postgres://') || dbUri.startsWith('postgresql://'))) {
     try {
       console.log('Connecting to PostgreSQL database...');
+
+      // Silence SSL mode warnings for pg-connection-string
+      if (dbUri.includes('sslmode=require') && !dbUri.includes('uselibpqcompat=true')) {
+        dbUri += (dbUri.includes('?') ? '&' : '?') + 'uselibpqcompat=true';
+      }
+
       pool = new Pool({
         connectionString: dbUri,
         ssl: dbUri.includes('sslmode=require') || !dbUri.includes('localhost')
           ? { rejectUnauthorized: false }
           : false
+      });
+
+      // Handle unexpected errors on idle pool clients gracefully to prevent crashes
+      pool.on('error', (err) => {
+        console.error('Unexpected error on idle PostgreSQL client:', err.message || err);
       });
 
       // Test connection
