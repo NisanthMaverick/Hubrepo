@@ -34,7 +34,7 @@ export function getChildEnv(dest) {
     'USERPROFILE', 'HOME', 'LANG', 'LC_ALL', 'COMSPEC',
     'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'COMMONPROGRAMFILES',
     'PROGRAMFILES', 'PROGRAMFILES(X86)', 'SYSTEMDRIVE',
-    'DATABASE_URL'  // always pass the master DB URL as a baseline
+    'DATABASE_URL', 'API_ID', 'API_HASH', 'TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'ADMIN_ID', 'OWNER_ID', 'ADMIN_IDS'
   ];
   
   for (const key of keepKeys) {
@@ -327,6 +327,31 @@ export function writeEnvFile(bot) {
     const correctedUrl = normaliseDbUrl(process.env.DATABASE_URL, dest);
     envContent += `DATABASE_URL=${correctedUrl}\n`;
     console.log(`Injected DATABASE_URL for ${bot.name}: ${correctedUrl.split('@')[0].replace(/:([^:@]+)@/, ':***@')}...`);
+  }
+
+  // Inject API_ID fallback from master env if missing in bot envVars
+  if (!envContent.includes('API_ID=') && (process.env.API_ID || process.env.TELEGRAM_API_ID)) {
+    const apiId = process.env.API_ID || process.env.TELEGRAM_API_ID;
+    envContent += `API_ID=${apiId}\n`;
+    console.log(`Injected API_ID fallback for ${bot.name}`);
+  }
+
+  // Inject API_HASH fallback from master env if missing in bot envVars
+  if (!envContent.includes('API_HASH=') && (process.env.API_HASH || process.env.TELEGRAM_API_HASH)) {
+    const apiHash = process.env.API_HASH || process.env.TELEGRAM_API_HASH;
+    envContent += `API_HASH=${apiHash}\n`;
+    console.log(`Injected API_HASH fallback for ${bot.name}`);
+  }
+
+  // Inject OWNER_ID / ADMIN_ID fallback from master env if missing in bot envVars
+  const adminVal = process.env.ADMIN_IDS || process.env.ADMIN_ID || process.env.OWNER_ID;
+  if (adminVal) {
+    if (!envContent.includes('OWNER_ID=')) {
+      envContent += `OWNER_ID=${adminVal}\n`;
+    }
+    if (!envContent.includes('ADMIN_ID=')) {
+      envContent += `ADMIN_ID=${adminVal}\n`;
+    }
   }
 
   if (!envContent.includes('PORT=')) {
