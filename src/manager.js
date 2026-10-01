@@ -136,11 +136,36 @@ function usesDirectAsyncpg(dest) {
  * pip install decisions, NOT for URL scheme selection.
  */
 function hasAsyncpgInRequirements(dest) {
+  return hasPackageInRequirements(dest, 'asyncpg');
+}
+
+function hasPackageInRequirements(dest, pkgName) {
   try {
     const reqPath = path.join(dest, 'requirements.txt');
     if (fs.existsSync(reqPath)) {
-      return fs.readFileSync(reqPath, 'utf8').toLowerCase().includes('asyncpg');
+      return fs.readFileSync(reqPath, 'utf8').toLowerCase().includes(pkgName.toLowerCase());
     }
+  } catch (e) {}
+  return false;
+}
+
+function usesSQLAlchemy(dest) {
+  try {
+    const scanDir = (dir) => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === '__pycache__') continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (scanDir(full)) return true;
+        } else if (entry.name.endsWith('.py')) {
+          const content = fs.readFileSync(full, 'utf8');
+          if (content.includes('sqlalchemy') || content.includes('create_engine') || content.includes('create_async_engine')) return true;
+        }
+      }
+      return false;
+    };
+    return scanDir(dest);
   } catch (e) {}
   return false;
 }
@@ -283,6 +308,13 @@ export function installDependencies(bot) {
           console.log(`${bot.name} uses asyncpg but it's not in requirements.txt — auto-installing...`);
           await runPip(['asyncpg']);
           console.log(`asyncpg auto-installed for ${bot.name}.`);
+        }
+
+        // Step 3: auto-install psycopg[binary] if the bot uses SQLAlchemy/psycopg and it's not in requirements.txt
+        if (!hasPackageInRequirements(dest, 'psycopg') && !hasPackageInRequirements(dest, 'psycopg2') && usesSQLAlchemy(dest)) {
+          console.log(`${bot.name} uses SQLAlchemy/PostgreSQL driver but psycopg is not in requirements.txt — auto-installing psycopg[binary]...`);
+          await runPip(['psycopg[binary]']);
+          console.log(`psycopg[binary] auto-installed for ${bot.name}.`);
         }
 
         console.log(`All dependencies ready for ${bot.name}.`);
@@ -513,19 +545,28 @@ export async function startBot(bot) {
       const missingModuleMatch = logsText.match(/ModuleNotFoundError: No module named '([^']+)'/);
       if (missingModuleMatch && runtime === 'python') {
         const missingModule = missingModuleMatch[1].split('.')[0]; // top-level package name
-        addLog(`System: Missing module detected: '${missingModule}'. Auto-installing...`);
-        console.log(`Auto-installing missing module '${missingModule}' for ${bot.name}...`);
+        let installPkg = missingModule;
+        if (missingModule === 'psycopg') installPkg = 'psycopg[binary]';
+        else if (missingModule === 'psycopg2') installPkg = 'psycopg2-binary';
+        else if (missingModule === 'PIL') installPkg = 'pillow';
+        else if (missingModule === 'cv2') installPkg = 'opencv-python';
+        else if (missingModule === 'fitz') installPkg = 'pymupdf';
+        else if (missingModule === 'bs4') installPkg = 'beautifulsoup4';
+        else if (missingModule === 'yaml') installPkg = 'pyyaml';
+
+        addLog(`System: Missing module detected: '${missingModule}'. Auto-installing ${installPkg}...`);
+        console.log(`Auto-installing missing module '${installPkg}' for ${bot.name}...`);
 
         try {
           await new Promise((res, rej) => {
-            const installProc = spawn('python', ['-m', 'pip', 'install', '--quiet', missingModule], {
+            const installProc = spawn('python', ['-m', 'pip', 'install', '--quiet', installPkg], {
               cwd: dest, shell: false
             });
             installProc.on('close', c => c === 0 ? res() : rej(new Error(`pip exit ${c}`)));
             installProc.on('error', rej);
           });
-          addLog(`System: '${missingModule}' installed successfully. Restarting bot...`);
-          console.log(`Module '${missingModule}' installed. Restarting ${bot.name}...`);
+          addLog(`System: '${installPkg}' installed successfully. Restarting bot...`);
+          console.log(`Module '${installPkg}' installed. Restarting ${bot.name}...`);
 
           if (!startupPassed) clearTimeout(startupTimeout);
 
