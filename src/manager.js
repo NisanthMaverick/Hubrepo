@@ -34,7 +34,9 @@ export function getChildEnv(dest) {
     'USERPROFILE', 'HOME', 'LANG', 'LC_ALL', 'COMSPEC',
     'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'COMMONPROGRAMFILES',
     'PROGRAMFILES', 'PROGRAMFILES(X86)', 'SYSTEMDRIVE',
-    'DATABASE_URL', 'API_ID', 'API_HASH', 'TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'ADMIN_ID', 'OWNER_ID', 'ADMIN_IDS'
+    'DATABASE_URL', 'API_ID', 'API_HASH', 'TELEGRAM_API_ID', 'TELEGRAM_API_HASH',
+    'MAIN_BOT_TOKEN', 'BOT_TOKEN', 'TELEGRAM_BOT_TOKEN', 'TOKEN',
+    'ADMIN_ID', 'OWNER_ID', 'ADMIN_IDS', 'GEMINI_API_KEY'
   ];
   
   for (const key of keepKeys) {
@@ -327,6 +329,14 @@ export function writeEnvFile(bot) {
     const correctedUrl = normaliseDbUrl(process.env.DATABASE_URL, dest);
     envContent += `DATABASE_URL=${correctedUrl}\n`;
     console.log(`Injected DATABASE_URL for ${bot.name}: ${correctedUrl.split('@')[0].replace(/:([^:@]+)@/, ':***@')}...`);
+  }
+
+  // Inject Token aliases if any token format is provided
+  const tokenVal = vars.MAIN_BOT_TOKEN || vars.BOT_TOKEN || vars.TELEGRAM_BOT_TOKEN || vars.TOKEN || process.env.MAIN_BOT_TOKEN || process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+  if (tokenVal) {
+    if (!envContent.includes('MAIN_BOT_TOKEN=')) envContent += `MAIN_BOT_TOKEN=${tokenVal}\n`;
+    if (!envContent.includes('BOT_TOKEN=')) envContent += `BOT_TOKEN=${tokenVal}\n`;
+    if (!envContent.includes('TELEGRAM_BOT_TOKEN=')) envContent += `TELEGRAM_BOT_TOKEN=${tokenVal}\n`;
   }
 
   // Inject API_ID fallback from master env if missing in bot envVars
